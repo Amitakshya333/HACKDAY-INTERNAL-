@@ -5,6 +5,7 @@
 
 param(
     [string]$Goal = "Fix authentication session race condition and pass all unit tests",
+    [string]$Model = "gemma2:9b",
     [switch]$DryRun
 )
 
@@ -19,6 +20,7 @@ Write-Host " 🚀 MAOS-GEMMA: SOVEREIGN TERMINAL SWARM SHOWCASE" -ForegroundColo
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Project Root : $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "Target Goal  : $Goal" -ForegroundColor Yellow
+Write-Host "Local Model  : $Model" -ForegroundColor Magenta
 Write-Host ""
 
 # 1. Quick pre-flight test check
@@ -37,9 +39,9 @@ Write-Host ""
 Write-Host "▶ Igniting MAOS-Gemma Swarm Kernel..." -ForegroundColor Cyan
 
 if ($DryRun) {
-    npx tsx src/cli/index.ts ignite --gemma --harness herdr --goal "$Goal" --dry-run
+    npx tsx src/cli/index.ts ignite --gemma --model "$Model" --harness herdr --goal "$Goal" --dry-run
 } else {
-    npx tsx src/cli/index.ts ignite --gemma --harness herdr --goal "$Goal"
+    npx tsx src/cli/index.ts ignite --gemma --model "$Model" --harness herdr --goal "$Goal"
 }
 
 Write-Host ""
