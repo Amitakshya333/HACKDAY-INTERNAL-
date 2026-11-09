@@ -224,7 +224,7 @@ export class MaosTui {
     });
   }
 
-  private handleModalSubmit(): void {
+  private async handleModalSubmit(): Promise<void> {
     const goal = this.modalInputText.trim();
     this.modalMode = 'none';
     this.modalInputText = '';
@@ -235,14 +235,134 @@ export class MaosTui {
       return;
     }
 
-    this.activities.unshift({
-      time: this.getNowTime(),
-      tag: 'IGNITE',
-      text: `Swarm triggered: "${goal.slice(0, 45)}..."`,
-      color: c.violetBright,
-    });
-    this.statusMessage = `⚡ Dispatched goal to local Gemma swarm (${this.selectedModel})!`;
+    this.statusMessage = `Delegating to Gemma on RTX 4060: deciding required panes...`;
     this.render();
+
+    try {
+      const decision = await this.queryGemmaForPlan(goal);
+      const paneCount = Math.min(Math.max(decision.pane_count || 3, 2), 4);
+      const agents = decision.agents || [];
+
+      this.activities.unshift({
+        time: this.getNowTime(),
+        tag: 'GEMMA',
+        text: `Gemma decided ${paneCount} physical panes for "${goal.slice(0, 30)}..."`,
+        color: c.cyan,
+      });
+
+      this.provisionHerdrPanes(paneCount, agents);
+
+      this.statusMessage = `✔ Gemma dynamically opened ${paneCount} physical panes in Tab 5!`;
+      this.render();
+    } catch (err: any) {
+      this.statusMessage = `Swarm dispatch note: ${err.message?.slice(0, 50)}`;
+      this.render();
+    }
+  }
+
+  private async queryGemmaForPlan(goal: string): Promise<{ pane_count: number; agents: any[] }> {
+    return new Promise((resolve) => {
+      const postData = JSON.stringify({
+        model: this.selectedModel,
+        prompt: `You are the MAOS Swarm Architect.
+Analyze this goal: "${goal}".
+Decide how many parallel worker agents are needed (between 2 and 4).
+Respond in pure JSON matching this exact schema:
+{
+  "plan_name": "Dynamic Swarm Pipeline",
+  "pane_count": 3,
+  "agents": [
+    {"name": "Agent-Alpha", "role": "WebGL Engine", "task": "Build Three.js scene", "color": "#8B5CF6"},
+    {"name": "Agent-Beta", "role": "Canva Dock", "task": "Build primitives UI", "color": "#EC4899"},
+    {"name": "Agent-Gamma", "role": "PBR Shaders", "task": "Configure shaders", "color": "#06B6D4"}
+  ]
+}
+Return ONLY valid JSON.`,
+        stream: false,
+        options: { temperature: 0.1, num_predict: 350 },
+      });
+
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: 11434,
+          path: '/api/generate',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+          timeout: 25000,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(body);
+              let rawJson = (parsed.response || '').trim();
+              if (rawJson.startsWith('```json')) rawJson = rawJson.slice(7);
+              if (rawJson.startsWith('```')) rawJson = rawJson.slice(3);
+              if (rawJson.endsWith('```')) rawJson = rawJson.slice(0, -3);
+              resolve(JSON.parse(rawJson.trim()));
+            } catch {
+              resolve({
+                pane_count: 3,
+                agents: [
+                  { name: 'Agent-Alpha', role: 'WebGL Engine', task: 'Setup viewport', color: '#8B5CF6' },
+                  { name: 'Agent-Beta', role: 'Canva Dock', task: 'Build primitives', color: '#EC4899' },
+                  { name: 'Agent-Gamma', role: 'PBR Shaders', task: 'Configure materials', color: '#06B6D4' },
+                ],
+              });
+            }
+          });
+        }
+      );
+
+      req.on('error', () => {
+        resolve({
+          pane_count: 3,
+          agents: [
+            { name: 'Agent-Alpha', role: 'WebGL Engine', task: 'Setup viewport', color: '#8B5CF6' },
+            { name: 'Agent-Beta', role: 'Canva Dock', task: 'Build primitives', color: '#EC4899' },
+            { name: 'Agent-Gamma', role: 'PBR Shaders', task: 'Configure materials', color: '#06B6D4' },
+          ],
+        });
+      });
+
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  private provisionHerdrPanes(count: number, agents: any[]): void {
+    try {
+      const out = execSync('herdr pane list', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+      const data = JSON.parse(out);
+      const allPanes = data.result?.panes || [];
+      let tab5Panes = allPanes.filter((p: any) => p.tab_id === 'wA:tD').map((p: any) => p.pane_id);
+
+      // Dynamically split until we have at least 'count' panes
+      while (tab5Panes.length < count) {
+        const parent = tab5Panes[0];
+        const dir = tab5Panes.length % 2 === 1 ? 'right' : 'down';
+        execSync(`herdr pane split ${parent} --direction ${dir} --no-focus`);
+        const refreshed = JSON.parse(execSync('herdr pane list', { encoding: 'utf-8' }));
+        tab5Panes = (refreshed.result?.panes || []).filter((p: any) => p.tab_id === 'wA:tD').map((p: any) => p.pane_id);
+      }
+
+      // Rename and dispatch worker tasks
+      for (let i = 0; i < count; i++) {
+        const paneId = tab5Panes[i];
+        const a = agents[i] || { name: `Agent-${i + 1}`, role: 'Worker', color: '#8B5CF6', task: 'Execute subtask' };
+        const label = `${a.name} | ${a.role.slice(0, 16)}`;
+
+        execSync(`herdr pane rename ${paneId} "${label}"`);
+        execSync(`herdr pane report-agent ${paneId} --source maos --agent "${a.name}" --state working`);
+
+        const cmd = `npx tsx src/cli/worker-agent.ts --agent ${a.name.toLowerCase()} --name ${a.name} --role "${a.role}" --task "${a.task}" --color "${a.color || '#8B5CF6'}" --model ${this.selectedModel}`;
+        execSync(`herdr pane run ${paneId} "${cmd}"`);
+      }
+    } catch {
+      /* ignore herdr communication errors */
+    }
   }
 
   private updateGpuTelemetry(): void {
