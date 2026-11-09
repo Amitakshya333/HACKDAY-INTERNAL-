@@ -170,7 +170,15 @@ export class OpenCodeGemmaProvider implements IProvider {
   }
 
   async generate(messages: ChatMessage[], tools?: ToolDef[], options?: ProviderRequestOptions): Promise<ProviderResponse> {
-    return this.inner.generate(this.withHarness(messages), tools, options);
+    try {
+      return await this.inner.generate(this.withHarness(messages), tools, options);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (tools && tools.length > 0 && msg.includes('does not support tools')) {
+        return await this.inner.generate(this.withHarness(messages), undefined, options);
+      }
+      throw err;
+    }
   }
 
   async generateStream(
@@ -181,7 +189,15 @@ export class OpenCodeGemmaProvider implements IProvider {
     if (typeof this.inner.generateStream !== 'function') {
       return this.generate(messages, tools, options);
     }
-    return this.inner.generateStream(this.withHarness(messages), tools, options);
+    try {
+      return await this.inner.generateStream(this.withHarness(messages), tools, options);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (tools && tools.length > 0 && msg.includes('does not support tools')) {
+        return await this.inner.generateStream(this.withHarness(messages), undefined, options);
+      }
+      throw err;
+    }
   }
 
   // ── OpenCode harness capabilities (for scheduler / diagnostics) ──
