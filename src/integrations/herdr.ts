@@ -110,8 +110,73 @@ export class HerdrError extends Error {
 }
 
 // ============================================================================
-// Path Resolution Helpers
+// Transport & Parsing Helper Functions
 // ============================================================================
+
+/**
+ * Identifies whether an error is a transport-level failure
+ * (meaning fallback to an alternative transport is sensible) versus
+ * a business-logic error from the Herdr server (such as 'pane_not_found',
+ * 'agent_not_found', 'timeout', etc., where retrying via another transport
+ * is useless or harmful).
+ */
+export function isTransportError(err: any): boolean {
+  if (!err) return false;
+  const code = (err.code || '').toString().toUpperCase();
+  const msg = (err.message || '').toLowerCase();
+
+  // Socket transport-level connection failures
+  if (
+    code === 'CONNECT_FAILED' ||
+    code === 'CONNECT_TIMEOUT' ||
+    code === 'SOCKET_ERROR' ||
+    code === 'CONNECTION_CLOSED' ||
+    code === 'WRITE_ERROR' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENOENT' ||
+    code === 'EPIPE' ||
+    code === 'ENOTFOUND'
+  ) {
+    return true;
+  }
+
+  // CLI transport-level failures (binary missing, command not found)
+  if (
+    code === 'CLI_ERROR' &&
+    (msg.includes('enoent') ||
+      msg.includes('not found') ||
+      msg.includes('cannot find') ||
+      msg.includes('is not recognized'))
+  ) {
+    return true;
+  }
+
+  // Method not implemented by running Herdr server version
+  if (code === 'METHOD_NOT_FOUND' || code === 'INVALID_REQUEST') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Converts a string or RegExp to a pattern suitable for Herdr's Rust regex engine.
+ * Preserves JS RegExp flags (i for case-insensitive, m for multiline, s for dot-all)
+ * by converting them to Rust inline flag syntax (?ims).
+ */
+export function toRustRegexPattern(match: RegExp | string): string {
+  if (typeof match === 'string') {
+    return match;
+  }
+  let flags = '';
+  if (match.flags) {
+    const valid = match.flags.replace(/[^ims]/g, '');
+    if (valid) {
+      flags = `(?${valid})`;
+    }
+  }
+  return `${flags}${match.source}`;
+}
 
 /**
  * Resolves the default socket or named pipe path for Herdr based on OS and environment.
@@ -253,6 +318,32 @@ export class HerdrHarness {
         }
       }, timeout);
 
+      const tryParseLine = (line: string): boolean => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed.id === reqId) {
+            cleanup();
+            if (parsed.error) {
+              reject(
+                new HerdrError(
+                  parsed.error.message || `Herdr error: ${parsed.error.code}`,
+                  parsed.error.code,
+                  parsed.error,
+                ),
+              );
+            } else {
+              resolve(parsed.result as T);
+            }
+            return true;
+          }
+        } catch {
+          // Non-JSON or partial line, ignore
+        }
+        return false;
+      };
+
       socket.setEncoding('utf8');
 
       socket.on('data', (chunk: string) => {
@@ -262,28 +353,8 @@ export class HerdrHarness {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (parsed.id === reqId) {
-              cleanup();
-              if (parsed.error) {
-                reject(
-                  new HerdrError(
-                    parsed.error.message || `Herdr error: ${parsed.error.code}`,
-                    parsed.error.code,
-                    parsed.error,
-                  ),
-                );
-              } else {
-                resolve(parsed.result as T);
-              }
-              return;
-            }
-          } catch {
-            // Non-JSON line or partial frame, ignore
+          if (tryParseLine(line)) {
+            return;
           }
         }
       });
@@ -297,13 +368,22 @@ export class HerdrHarness {
 
       socket.on('close', () => {
         if (!settled) {
+          // Attempt to parse any remaining buffer before declaring closed prematurely
+          if (buffer && tryParseLine(buffer)) {
+            return;
+          }
           cleanup();
           reject(new HerdrError(`Socket closed before response for '${method}'`, 'CONNECTION_CLOSED'));
         }
       });
 
       try {
-        socket.write(payload);
+        socket.write(payload, (err) => {
+          if (err && !settled) {
+            cleanup();
+            reject(new HerdrError(`Failed to write to Herdr socket: ${err.message}`, 'WRITE_ERROR', err));
+          }
+        });
       } catch (err: any) {
         cleanup();
         reject(new HerdrError(`Failed to write to Herdr socket: ${err.message}`, 'WRITE_ERROR', err));
@@ -379,9 +459,25 @@ export class HerdrHarness {
     } catch (err: any) {
       const stderr = err.stderr ? err.stderr.toString().trim() : '';
       const stdout = err.stdout ? err.stdout.toString().trim() : '';
+
+      // Try parsing structured error from CLI stderr
+      let serverErrorCode: string | undefined;
+      let serverErrorMessage: string | undefined;
+      if (stderr) {
+        try {
+          const parsedErr = JSON.parse(stderr);
+          if (parsedErr.error) {
+            serverErrorCode = parsedErr.error.code;
+            serverErrorMessage = parsedErr.error.message;
+          }
+        } catch {
+          // not JSON stderr
+        }
+      }
+
       throw new HerdrError(
-        `Herdr CLI command '${this.cliPath} ${args.join(' ')}' failed: ${stderr || err.message}`,
-        err.code ? String(err.code) : 'CLI_ERROR',
+        serverErrorMessage || `Herdr CLI command '${this.cliPath} ${args.join(' ')}' failed: ${stderr || err.message}`,
+        serverErrorCode || (err.code ? String(err.code) : 'CLI_ERROR'),
         { stdout, stderr, code: err.code },
       );
     }
@@ -392,17 +488,24 @@ export class HerdrHarness {
   // --------------------------------------------------------------------------
 
   /**
-   * 1. splitPane(direction, cwd, noFocus) -> returns new pane_id
+   * 1. splitPane(direction, cwd, noFocus, targetPaneId) -> returns new pane_id
    *
    * Splits an existing pane or current view into a new pane.
    *
    * @param direction 'right' (vertical split) or 'down' (horizontal split). Defaults to 'right'.
    * @param cwd Working directory for the new pane. Defaults to current directory.
    * @param noFocus Whether to prevent stealing user focus. Defaults to true.
+   * @param targetPaneId Optional explicit pane to split (defaults to HERDR_PANE_ID or focused pane).
    * @returns The newly created pane ID (e.g. 'wA:pB')
    */
-  public async splitPane(direction?: SplitDirection, cwd?: string, noFocus: boolean = true): Promise<string> {
+  public async splitPane(
+    direction?: SplitDirection,
+    cwd?: string,
+    noFocus: boolean = true,
+    targetPaneId?: string,
+  ): Promise<string> {
     const normalizedDir = normalizeDirection(direction);
+    const resolvedTarget = targetPaneId || process.env.HERDR_PANE_ID || null;
 
     if (this.preferSocket) {
       try {
@@ -410,20 +513,28 @@ export class HerdrHarness {
           direction: normalizedDir,
           cwd: cwd || null,
           focus: !noFocus,
-          target_pane_id: null,
+          target_pane_id: resolvedTarget,
         });
 
         const paneId = result?.pane?.pane_id || result?.pane_id;
         if (paneId) {
           return paneId;
         }
-      } catch {
-        // Fall back to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI on transport error
       }
     }
 
     // CLI fallback
     const args = ['pane', 'split', '--direction', normalizedDir];
+    if (resolvedTarget) {
+      args.push('--pane', resolvedTarget);
+    } else if (process.env.HERDR_PANE_ID) {
+      args.push('--current');
+    }
     if (cwd) {
       args.push('--cwd', cwd);
     }
@@ -439,7 +550,6 @@ export class HerdrHarness {
       const paneId = parsed.result?.pane?.pane_id || parsed.result?.pane_id;
       if (paneId) return paneId;
     } catch {
-      // If not JSON, search with regex
       const match = stdout.match(/(w[A-Za-z0-9]+:p[A-Za-z0-9]+)/);
       if (match) return match[1];
     }
@@ -464,15 +574,7 @@ export class HerdrHarness {
     if (command === undefined || command === null)
       throw new HerdrError('command is required for runCommand', 'INVALID_ARGUMENT');
 
-    // Prefer CLI `herdr pane run` directly because Herdr CLI atomically handles bracketed paste,
-    // pty line buffering, and native key dispatch.
-    try {
-      await this.execCli(['pane', 'run', paneId, command]);
-      return;
-    } catch (cliErr: any) {
-      if (!this.preferSocket) throw cliErr;
-
-      // Socket fallback via pane.send_input or pane.send_text
+    if (this.preferSocket) {
       try {
         await this.sendSocketRequest('pane.send_input', {
           pane_id: paneId,
@@ -480,22 +582,32 @@ export class HerdrHarness {
           keys: ['enter'],
         });
         return;
-      } catch (socketErr: any) {
-        // Try fallback to pane.send_text with newline
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall back to CLI only on transport failure
+      }
+    }
+
+    // CLI execution
+    try {
+      await this.execCli(['pane', 'run', paneId, command]);
+      return;
+    } catch (cliErr: any) {
+      if (!this.preferSocket && isTransportError(cliErr)) {
         try {
-          await this.sendSocketRequest('pane.send_text', {
+          await this.sendSocketRequest('pane.send_input', {
             pane_id: paneId,
-            text: command.endsWith('\n') ? command : `${command}\n`,
+            text: command,
+            keys: ['enter'],
           });
           return;
         } catch {
-          throw new HerdrError(
-            `runCommand failed on pane '${paneId}' via CLI and socket: ${cliErr.message}`,
-            'RUN_COMMAND_FAILED',
-            { cliErr, socketErr },
-          );
+          // propagate cliErr
         }
       }
+      throw cliErr;
     }
   }
 
@@ -538,8 +650,11 @@ export class HerdrHarness {
         if (result?.text !== undefined) {
           return result.text;
         }
-      } catch {
-        // Fall through to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI only on transport failure
       }
     }
 
@@ -558,7 +673,7 @@ export class HerdrHarness {
   // --------------------------------------------------------------------------
 
   /**
-   * 4. waitForOutput(paneId, match, timeoutMs) -> waits for string or regex in pane
+   * 4. waitForOutput(paneId, match, timeoutMs, options) -> waits for string or regex in pane
    *
    * Searches recent terminal buffer and waits until matching text or regex pattern appears.
    *
@@ -581,13 +696,14 @@ export class HerdrHarness {
     const { socketSource, cliSource } = normalizeReadSource(source);
     const lines = options.lines && options.lines > 0 ? options.lines : null;
     const isRegex = match instanceof RegExp;
-    const patternStr = isRegex ? match.source : match;
+    const rustPattern = toRustRegexPattern(match);
+    const displayPattern = isRegex ? match.toString() : match;
 
     if (this.preferSocket) {
       try {
         const matchPayload: OutputMatchPayload = isRegex
-          ? { type: 'regex', value: patternStr }
-          : { type: 'substring', value: patternStr };
+          ? { type: 'regex', value: rustPattern }
+          : { type: 'substring', value: rustPattern };
 
         const result = await this.sendSocketRequest<any>(
           'pane.wait_for_output',
@@ -608,9 +724,19 @@ export class HerdrHarness {
         if (result?.read?.text) {
           return result.read.text;
         }
-        return patternStr;
-      } catch {
-        // Fall through to CLI or Polling
+        return isRegex ? match.source : match;
+      } catch (err: any) {
+        const code = (err.code || '').toLowerCase();
+        if (code === 'timeout') {
+          throw new HerdrError(
+            `waitForOutput timed out after ${timeoutMs}ms waiting for '${displayPattern}' in pane '${paneId}'`,
+            'WAIT_OUTPUT_TIMEOUT',
+          );
+        }
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI / Polling only on transport failure
       }
     }
 
@@ -618,9 +744,9 @@ export class HerdrHarness {
     try {
       const args = ['pane', 'wait-output', paneId];
       if (isRegex) {
-        args.push('--regex', patternStr);
+        args.push('--regex', rustPattern);
       } else {
-        args.push('--match', patternStr);
+        args.push('--match', rustPattern);
       }
       args.push('--source', cliSource);
       if (lines) {
@@ -638,9 +764,20 @@ export class HerdrHarness {
       } catch {
         if (stdout) return stdout;
       }
-      return patternStr;
-    } catch {
-      // Fall through to polling client-side fallback
+      return isRegex ? match.source : match;
+    } catch (cliErr: any) {
+      const msg = (cliErr.message || '').toLowerCase();
+      const code = (cliErr.code || '').toLowerCase();
+      if (msg.includes('timeout') || msg.includes('timed out') || code === 'timeout') {
+        throw new HerdrError(
+          `waitForOutput timed out after ${timeoutMs}ms waiting for '${displayPattern}' in pane '${paneId}'`,
+          'WAIT_OUTPUT_TIMEOUT',
+        );
+      }
+      if (msg.includes('pane_not_found') || msg.includes('not found') || code === 'pane_not_found') {
+        throw cliErr;
+      }
+      // Fall through to client-side polling only if wait-output subcommand is unavailable
     }
 
     // Client-side polling fallback
@@ -655,17 +792,17 @@ export class HerdrHarness {
           return matchResult[0];
         }
       } else {
-        if (buffer.includes(patternStr)) {
+        if (buffer.includes(match)) {
           const linesList = buffer.split('\n');
-          const foundLine = linesList.find((l) => l.includes(patternStr));
-          return foundLine || patternStr;
+          const foundLine = linesList.find((l) => l.includes(match));
+          return foundLine || match;
         }
       }
       await new Promise((res) => setTimeout(res, pollInterval));
     }
 
     throw new HerdrError(
-      `waitForOutput timed out after ${timeoutMs}ms waiting for '${patternStr}' in pane '${paneId}'`,
+      `waitForOutput timed out after ${timeoutMs}ms waiting for '${displayPattern}' in pane '${paneId}'`,
       'WAIT_OUTPUT_TIMEOUT',
     );
   }
@@ -688,8 +825,11 @@ export class HerdrHarness {
         if (Array.isArray(result?.agents)) {
           return result.agents;
         }
-      } catch {
-        // Fall through to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI on transport error
       }
     }
 
@@ -723,8 +863,15 @@ export class HerdrHarness {
         if (result?.agent) {
           return result.agent;
         }
-      } catch {
-        // Fall through to CLI
+      } catch (err: any) {
+        const code = (err.code || '').toLowerCase();
+        if (code === 'agent_not_found') {
+          return null;
+        }
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI on transport error
       }
     }
 
@@ -746,7 +893,7 @@ export class HerdrHarness {
   // --------------------------------------------------------------------------
 
   /**
-   * 6. sendPrompt(target, prompt, wait) -> submits prompt to agent
+   * 6. sendPrompt(target, prompt, wait, timeoutMs) -> submits prompt to agent
    *
    * Sends a prompt string to an agent running in a pane.
    * If wait is true, waits until the agent transitions to a settled state (idle, done, or blocked).
@@ -789,8 +936,11 @@ export class HerdrHarness {
         if (result?.agent) {
           return result.agent;
         }
-      } catch {
-        // Fall back to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall back to CLI on transport error
       }
     }
 
@@ -815,11 +965,7 @@ export class HerdrHarness {
     const refreshed = await this.getAgent(target);
     if (refreshed) return refreshed;
 
-    return {
-      pane_id: target,
-      agent: 'unknown',
-      agent_status: wait ? 'done' : 'working',
-    };
+    throw new HerdrError(`Failed to confirm prompt status for agent '${target}'`, 'PROMPT_UNCONFIRMED');
   }
 
   // --------------------------------------------------------------------------
@@ -838,8 +984,11 @@ export class HerdrHarness {
       try {
         await this.sendSocketRequest('pane.close', { pane_id: paneId });
         return true;
-      } catch {
-        // Fall back to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          return false;
+        }
+        // Fall back to CLI on transport error
       }
     }
 
@@ -855,9 +1004,18 @@ export class HerdrHarness {
    * Checks if Herdr multiplexer is running and responsive via socket or CLI.
    */
   public async isAvailable(): Promise<boolean> {
+    if (this.preferSocket) {
+      try {
+        const pong = await this.sendSocketRequest<any>('ping', {}, 2000);
+        if (pong?.type === 'pong') return true;
+      } catch {
+        // Socket probe failed, try CLI
+      }
+    }
+
     try {
-      const agents = await this.listAgents();
-      return Array.isArray(agents);
+      const { stdout } = await this.execCli(['status'], 3000);
+      return stdout.includes('server:') || stdout.includes('running');
     } catch {
       try {
         const { stdout } = await this.execCli(['agent', 'list'], 3000);
@@ -880,8 +1038,11 @@ export class HerdrHarness {
         if (Array.isArray(result?.panes)) {
           return result.panes;
         }
-      } catch {
-        // Fall through to CLI
+      } catch (err: any) {
+        if (!isTransportError(err)) {
+          throw err;
+        }
+        // Fall through to CLI on transport error
       }
     }
 
@@ -923,10 +1084,15 @@ export function getDefaultHerdrHarness(): HerdrHarness {
 }
 
 /**
- * 1. splitPane(direction, cwd, noFocus) -> returns new pane_id
+ * 1. splitPane(direction, cwd, noFocus, targetPaneId) -> returns new pane_id
  */
-export async function splitPane(direction?: SplitDirection, cwd?: string, noFocus: boolean = true): Promise<string> {
-  return getDefaultHerdrHarness().splitPane(direction, cwd, noFocus);
+export async function splitPane(
+  direction?: SplitDirection,
+  cwd?: string,
+  noFocus: boolean = true,
+  targetPaneId?: string,
+): Promise<string> {
+  return getDefaultHerdrHarness().splitPane(direction, cwd, noFocus, targetPaneId);
 }
 
 /**
@@ -948,7 +1114,7 @@ export async function readPaneBuffer(
 }
 
 /**
- * 4. waitForOutput(paneId, match, timeoutMs) -> waits for string or regex in pane
+ * 4. waitForOutput(paneId, match, timeoutMs, options) -> waits for string or regex in pane
  */
 export async function waitForOutput(
   paneId: string,
@@ -974,7 +1140,7 @@ export async function getAgent(target: string): Promise<AgentInfo | null> {
 }
 
 /**
- * 6. sendPrompt(target, prompt, wait) -> submits prompt to agent
+ * 6. sendPrompt(target, prompt, wait, timeoutMs) -> submits prompt to agent
  */
 export async function sendPrompt(
   target: string,
