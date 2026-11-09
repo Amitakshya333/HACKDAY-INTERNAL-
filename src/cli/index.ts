@@ -18,18 +18,9 @@ import { runBrain } from './brain';
 import { runRepl } from './repl';
 import { runDashboard } from './dashboard';
 import { runDoctor } from './doctor';
-import {
-  bundlePrepare,
-  bundleVerify,
-  runRehearsalWorkflow,
-  verifyRehearsalEvidence,
-} from '../industrial/bundle-cli';
-import {
-  runKbBuild,
-  runKbStatus,
-  runKbVerify,
-  runKbClear,
-} from '../industrial/kb-cli';
+import { runIgnite, IgniteOptions } from './commands/ignite';
+import { bundlePrepare, bundleVerify, runRehearsalWorkflow, verifyRehearsalEvidence } from '../industrial/bundle-cli';
+import { runKbBuild, runKbStatus, runKbVerify, runKbClear } from '../industrial/kb-cli';
 import {
   runIndustrialPreflight,
   runIndustrialBoundary,
@@ -183,6 +174,32 @@ program
   .action(async (goal: string, options: PlanOptions) => {
     try {
       await runPlan(goal, options);
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// ─── maos ignite ──────────────────────────────────────────────
+// Sovereign multi-pane swarm: Gemma decomposes the goal, Herdr tiles worker
+// panes, the autonomous healer watches scrollback and hot-injects repairs.
+program
+  .command('ignite')
+  .description('Ignite autonomous swarm: maos ignite --gemma --harness herdr --goal "<task>"')
+  .option('--gemma', 'Use local Gemma engine for reasoning (via OpenCode harness when available)')
+  .option('--harness <harness>', 'Terminal multiplexer harness (supported: herdr)', 'herdr')
+  .option('--goal <goal>', 'Goal for the swarm to execute end-to-end')
+  .option('-p, --provider <provider>', 'Override provider from maos.config.json (skips Gemma default)')
+  .option('-m, --model <model>', 'Model ID (default: MAOS_GEMMA_MODEL or gemma2:9b)')
+  .option('--panes <n>', 'Max worker panes to spawn (1-8, default: 4)', '4')
+  .option('--max-heals <n>', 'Max auto-applied heals per pane (default: 5)', '5')
+  .option('--branch-prefix <prefix>', 'Git branch prefix for worker worktrees', 'maos-ignite')
+  .option('--dry-run', 'Preview the decomposition plan without spawning panes')
+  .option('--no-watch', 'Single heal sweep then exit (default watches until Ctrl+C)')
+  .option('-y, --yes', 'Auto-merge clean worker branches on completion')
+  .action(async (options: IgniteOptions) => {
+    try {
+      await runIgnite(options);
     } catch (err: any) {
       console.error(chalk.red(`Error: ${err.message}`));
       process.exit(1);
@@ -534,8 +551,11 @@ const standaloneIndustrialProgram = invokedAsIndustrial
       .version(VERSION)
       .description('MAOS Industrial commands: offline bundle, rehearsal, and evidence verification')
   : undefined;
-const industrial = standaloneIndustrialProgram ||
-  program.command('industrial').description('MAOS Industrial commands: offline bundle, rehearsal, and evidence verification');
+const industrial =
+  standaloneIndustrialProgram ||
+  program
+    .command('industrial')
+    .description('MAOS Industrial commands: offline bundle, rehearsal, and evidence verification');
 
 industrial
   .description('MAOS Industrial home screen (Ring TUI; /ring for Ring, /verify for checks)')
@@ -619,9 +639,7 @@ industrial
     }
   });
 
-const bundleCmd = industrial
-  .command('bundle')
-  .description('Manage offline bundle packaging and verification');
+const bundleCmd = industrial.command('bundle').description('Manage offline bundle packaging and verification');
 
 bundleCmd
   .command('prepare')
@@ -644,7 +662,11 @@ bundleCmd
 
     if (result.success) {
       console.log(chalk.green(`\n✅ Bundle preparation completed in ${result.durationMs}ms`));
-      console.log(chalk.white(`Entries:      ${result.manifest.totalEntries} files (${(result.manifest.totalSize / 1024 / 1024).toFixed(2)} MB)`));
+      console.log(
+        chalk.white(
+          `Entries:      ${result.manifest.totalEntries} files (${(result.manifest.totalSize / 1024 / 1024).toFixed(2)} MB)`,
+        ),
+      );
       console.log(chalk.white(`Entries Hash: ${result.manifest.buildIdentity.entriesHash}`));
       if (result.archivePath) {
         console.log(chalk.white(`Archive:      ${result.archivePath}`));
@@ -697,7 +719,9 @@ industrial
   .action(async (opts) => {
     console.log(chalk.bold.blue('\n🧪 MAOS Industrial — Clean Disconnected Rehearsal\n'));
     console.log(chalk.gray(`Project Root: ${opts.projectRoot}`));
-    console.log(chalk.gray(`Network:      ${opts.allowNetwork ? 'ALLOWED (Simulation mode)' : 'STRICT DISCONNECTED'}\n`));
+    console.log(
+      chalk.gray(`Network:      ${opts.allowNetwork ? 'ALLOWED (Simulation mode)' : 'STRICT DISCONNECTED'}\n`),
+    );
 
     const result = await runRehearsalWorkflow({
       projectRoot: opts.projectRoot,
@@ -720,9 +744,7 @@ industrial
     }
   });
 
-const evidenceCmd = industrial
-  .command('evidence')
-  .description('Manage and verify rehearsal evidence');
+const evidenceCmd = industrial.command('evidence').description('Manage and verify rehearsal evidence');
 
 evidenceCmd
   .command('verify')
@@ -823,8 +845,14 @@ industrial
   .option('-p, --project-root <path>', 'Project root directory', process.cwd())
   .option('--project-id <id>', 'Project identifier', 'default')
   .option('-y, --yes', 'Confirm the boundary state change')
-  .option('--sampling-interval-ms <ms>', 'Passive observation sampling interval in milliseconds', (v: string) => parseInt(v, 10))
-  .option('--monitor-pid <pid...>', 'Additional PID(s) to attribute to the boundary (e.g. an externally launched model server)', (v: string) => parseInt(v, 10))
+  .option('--sampling-interval-ms <ms>', 'Passive observation sampling interval in milliseconds', (v: string) =>
+    parseInt(v, 10),
+  )
+  .option(
+    '--monitor-pid <pid...>',
+    'Additional PID(s) to attribute to the boundary (e.g. an externally launched model server)',
+    (v: string) => parseInt(v, 10),
+  )
   .option('--json', 'Output machine-readable JSON')
   .action(async (action, opts) => {
     const result = await runIndustrialBoundary({
@@ -902,8 +930,17 @@ industrial
   .option('--analysis-id <analysisId>', 'Replay one local telemetry analysis against its source CSV')
   .option('--json', 'Output machine-readable JSON')
   .action(async (target, exportPath, opts) => {
-    const effectiveExport = opts.export || (target === 'export' ? exportPath : (target && (target.endsWith('.json') || target.includes('audit-export')) ? target : undefined));
-    const effectiveTarget = effectiveExport && (!target || target === 'export' || target.endsWith('.json') || target.includes('audit-export')) ? 'export' : (target || 'audit');
+    const effectiveExport =
+      opts.export ||
+      (target === 'export'
+        ? exportPath
+        : target && (target.endsWith('.json') || target.includes('audit-export'))
+          ? target
+          : undefined);
+    const effectiveTarget =
+      effectiveExport && (!target || target === 'export' || target.endsWith('.json') || target.includes('audit-export'))
+        ? 'export'
+        : target || 'audit';
     const result = await runIndustrialVerify({
       target: effectiveTarget,
       runId: opts.runId,
@@ -940,7 +977,11 @@ industrial
   .command('reset')
   .description('Deterministically reset confirmed generated test state (dry-run and allowlist)')
   .option('-p, --project-root <path>', 'Project root directory', process.cwd())
-  .option('--allowlist <categories>', 'Comma-separated categories to reset (queue, output, index, sandbox, conversation, all)', 'all')
+  .option(
+    '--allowlist <categories>',
+    'Comma-separated categories to reset (queue, output, index, sandbox, conversation, all)',
+    'all',
+  )
   .option('--run-id <runId>', 'Filter reset to a specific run ID')
   .option('--dry-run', 'Preview files that would be removed without deleting anything')
   .option('-y, --yes', 'Confirm live deletion of generated test state')
