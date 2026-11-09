@@ -69,6 +69,7 @@
     "dev": "ts-node src/cli/index.ts",
     "start": "node dist/cli/index.js dashboard",
     "dashboard": "node dist/cli/index.js dashboard",
+    "tui": "tsx src/tui/maos-tui.ts",
     "repl": "node dist/cli/index.js repl",
     "test": "vitest run",
     "industrial": "ts-node src/cli/index.ts industrial",

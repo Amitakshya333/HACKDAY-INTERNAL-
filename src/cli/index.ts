@@ -1039,9 +1039,21 @@ industrial
     process.exit(result.exitCode);
   });
 
-// Default action: launch interactive REPL when no subcommand is provided
+// ─── maos tui ────────────────────────────────────────────────
+program
+  .command('tui')
+  .description('Launch the interactive Sovereign Swarm Mission Control TUI')
+  .action(() => {
+    const { MaosTui } = require('../tui/maos-tui');
+    const tui = new MaosTui(process.cwd());
+    tui.start();
+  });
+
+// Default action: launch interactive Sovereign Swarm TUI when no subcommand is provided
 program.action(() => {
-  runRepl(process.cwd());
+  const { MaosTui } = require('../tui/maos-tui');
+  const tui = new MaosTui(process.cwd());
+  tui.start();
 });
 
 // Parse
