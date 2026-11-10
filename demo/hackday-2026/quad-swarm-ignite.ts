@@ -87,10 +87,17 @@ async function main() {
     return;
   }
 
-  const allPanes = panesJson.result?.panes || [];
-  let tab5Panes = allPanes.filter((p: any) => p.tab_id === 'wA:tD');
+  let tabId = 'wA:tE';
+  try {
+    const tabData = JSON.parse(execHerdr('tab list'));
+    const matched = (tabData.result?.tabs || []).find((t: any) => t.label === '5' || t.focused || t.number === 14);
+    if (matched?.tab_id) tabId = matched.tab_id;
+  } catch {}
 
-  console.log(`   Found ${tab5Panes.length} pane(s) in Tab 5.`);
+  const allPanes = panesJson.result?.panes || [];
+  let tab5Panes = allPanes.filter((p: any) => p.tab_id === tabId);
+
+  console.log(`   Found ${tab5Panes.length} pane(s) in Tab 5 (${tabId}).`);
 
   // If fewer than 4 panes, create splits to make a 2x2 grid
   while (tab5Panes.length < 4) {
@@ -99,7 +106,7 @@ async function main() {
     console.log(chalk.cyan(`   Tiling terminal: splitting ${parentPane} (${dir})...`));
     execHerdr(`pane split ${parentPane} --direction ${dir} --no-focus`);
     const refreshed = JSON.parse(execHerdr('pane list'));
-    tab5Panes = (refreshed.result?.panes || []).filter((p: any) => p.tab_id === 'wA:tD');
+    tab5Panes = (refreshed.result?.panes || []).filter((p: any) => p.tab_id === tabId);
   }
 
   const targetPaneIds = tab5Panes.slice(0, 4).map((p: any) => p.pane_id);

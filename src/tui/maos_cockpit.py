@@ -377,19 +377,36 @@ Return ONLY valid JSON, no conversational markdown."""
             res = subprocess.run(["herdr", "pane", "list"], capture_output=True, text=True, check=True)
             data = json.loads(res.stdout)
             all_panes = data.get("result", {}).get("panes", [])
-            tab5_panes = [p["pane_id"] for p in all_panes if p.get("tab_id") == "wA:tD"]
+            # Dynamically find Tab 5 id
+            tab_id = "wA:tE"
+            try:
+                t_res = subprocess.run(["herdr", "tab", "list"], capture_output=True, text=True)
+                t_data = json.loads(t_res.stdout)
+                for t in t_data.get("result", {}).get("tabs", []):
+                    if t.get("label") == "5" or t.get("focused") or t.get("number") == 14:
+                        tab_id = t.get("tab_id", "wA:tE")
+                        break
+            except Exception:
+                pass
 
-            # Ensure we have at least count panes
-            while len(tab5_panes) < count:
-                parent = tab5_panes[0]
-                dir_ = "right" if len(tab5_panes) % 2 == 1 else "down"
+            tab5_panes = [p["pane_id"] for p in all_panes if p.get("tab_id") == tab_id]
+
+            # Ensure we have at least count + 1 panes so cockpit pane is preserved
+            cockpit_pane = tab5_panes[0] if tab5_panes else "wA:p11"
+            while len(tab5_panes) < count + 1 and len(tab5_panes) < 5:
+                parent = cockpit_pane if len(tab5_panes) == 1 else tab5_panes[-1]
+                dir_ = "right" if len(tab5_panes) == 1 else "down"
                 subprocess.run(["herdr", "pane", "split", parent, "--direction", dir_, "--no-focus"], capture_output=True)
                 refreshed = json.loads(subprocess.run(["herdr", "pane", "list"], capture_output=True, text=True).stdout)
-                tab5_panes = [p["pane_id"] for p in refreshed.get("result", {}).get("panes", []) if p.get("tab_id") == "wA:tD"]
+                tab5_panes = [p["pane_id"] for p in refreshed.get("result", {}).get("panes", []) if p.get("tab_id") == tab_id]
 
-            # Rename and assign each pane
+            worker_panes = [p for p in tab5_panes if p != cockpit_pane]
+
+            # Rename and assign each worker pane
             for idx, agent in enumerate(agents[:count]):
-                pane_id = tab5_panes[idx]
+                if idx >= len(worker_panes):
+                    break
+                pane_id = worker_panes[idx]
                 label = f"{agent.get('name')} | {agent.get('role')[:18]}"
                 subprocess.run(["herdr", "pane", "rename", pane_id, label], capture_output=True)
                 subprocess.run(["herdr", "pane", "report-agent", pane_id, "--source", "maos", "--agent", agent.get("name", "agent"), "--state", "working"], capture_output=True)

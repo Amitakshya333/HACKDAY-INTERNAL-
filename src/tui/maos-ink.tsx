@@ -220,21 +220,31 @@ Return ONLY valid JSON.`;
 
   const provisionHerdrPanes = async (count: number, agents: AgentPlan[]) => {
     try {
-      const out = execSync('herdr pane list', { encoding: 'utf-8' });
+      let tabId = 'wA:tE';
+      try {
+        const tabList = JSON.parse(execSync('herdr tab list', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }));
+        const t = (tabList.result?.tabs || []).find((tab: any) => tab.label === '5' || tab.focused || tab.number === 14);
+        if (t?.tab_id) tabId = t.tab_id;
+      } catch {}
+
+      const out = execSync('herdr pane list', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
       const data = JSON.parse(out);
       const allPanes = data.result?.panes || [];
-      let tab5Panes = allPanes.filter((p: any) => p.tab_id === 'wA:tD').map((p: any) => p.pane_id);
+      let tabPanes = allPanes.filter((p: any) => p.tab_id === tabId).map((p: any) => p.pane_id);
+      const cockpitPane = tabPanes[0] || 'wA:p11';
 
-      while (tab5Panes.length < count) {
-        const parent = tab5Panes[0] || 'wA:pQ';
-        const dir = tab5Panes.length % 2 === 1 ? 'right' : 'down';
+      while (tabPanes.length < count + 1 && tabPanes.length < 5) {
+        const parent = tabPanes.length === 1 ? cockpitPane : tabPanes[tabPanes.length - 1];
+        const dir = tabPanes.length === 1 ? 'right' : 'down';
         execSync(`herdr pane split ${parent} --direction ${dir} --no-focus`);
-        const refreshed = JSON.parse(execSync('herdr pane list', { encoding: 'utf-8' }));
-        tab5Panes = (refreshed.result?.panes || []).filter((p: any) => p.tab_id === 'wA:tD').map((p: any) => p.pane_id);
+        const refreshed = JSON.parse(execSync('herdr pane list', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }));
+        tabPanes = (refreshed.result?.panes || []).filter((p: any) => p.tab_id === tabId).map((p: any) => p.pane_id);
       }
 
-      for (let i = 0; i < count; i++) {
-        const paneId = tab5Panes[i];
+      const workerPanes = tabPanes.filter((id: string) => id !== cockpitPane);
+
+      for (let i = 0; i < count && i < workerPanes.length; i++) {
+        const paneId = workerPanes[i];
         const a = agents[i] || { name: `Agent-${i + 1}`, role: 'Worker', color: '#8B5CF6', task: 'Subtask' };
         execSync(`herdr pane rename ${paneId} "${a.name} | ${a.role.slice(0, 16)}"`);
         execSync(`herdr pane report-agent ${paneId} --source maos --agent "${a.name}" --state working`);
