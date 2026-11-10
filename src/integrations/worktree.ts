@@ -39,7 +39,7 @@ export interface WorktreeInfo {
 // ---- Helpers ----
 
 function gitExec(args: string[], cwd: string): string {
-  return execFileSync('git', args, {
+  return execFileSync('git', ['-c', 'core.longpaths=true', ...args], {
     cwd,
     encoding: 'utf-8',
     timeout: 30000,
