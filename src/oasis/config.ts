@@ -183,7 +183,12 @@ export function validateOasisConfig(config: any): { valid: boolean; errors: stri
     if (!isLoopbackHost(config.ollama.host)) {
       errors.push(`OpSec violation: "ollama.host" must be loopback (got "${config.ollama.host}")`);
     }
-    if (typeof config.ollama.port !== 'number' || config.ollama.port <= 0 || config.ollama.port > 65535) {
+    if (
+      typeof config.ollama.port !== 'number' ||
+      !Number.isInteger(config.ollama.port) ||
+      config.ollama.port <= 0 ||
+      config.ollama.port > 65535
+    ) {
       errors.push(`Invalid "ollama.port": "${config.ollama.port}"`);
     }
   }

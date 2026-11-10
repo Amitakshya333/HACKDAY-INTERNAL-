@@ -348,16 +348,19 @@ export class MaosTui {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
+    process.stdin.resume();
     readline.emitKeypressEvents(process.stdin);
 
     process.stdin.on('keypress', (str, key) => {
-      if (!key || this.externalCommandRunning) return;
+      if (!key) return;
 
-      // Handle Ctrl+C to always quit
+      // Handle Ctrl+C to always quit immediately
       if (key.ctrl && key.name === 'c') {
         this.exit();
         return;
       }
+
+      if (this.externalCommandRunning) return;
 
       // If in modal dialog mode (ignite/promptTest modal overlays):
       if (this.modalMode !== 'none' && this.modalMode !== 'command') {
@@ -387,12 +390,11 @@ export class MaosTui {
         return;
       }
 
-      // If in command mode or on Tab 1 (where the prompt box is always ready to receive input):
-      if (this.modalMode === 'command' || this.activeTab === 1) {
+      // If on Tab 1 (where the prompt box is always ready to receive input) or command mode:
+      if (this.activeTab === 1 || this.modalMode === 'command') {
         if (key.name === 'tab') {
           this.activeTab = this.activeTab >= 4 ? 1 : this.activeTab + 1;
           this.statusMessage = `Switched to View [${this.activeTab}].`;
-          this.modalMode = this.activeTab === 1 ? 'command' : 'none';
           this.render();
           return;
         }
@@ -410,7 +412,6 @@ export class MaosTui {
           if (command) {
             this.commandHistory.push(command);
             this.commandHistory = this.commandHistory.slice(-50);
-            this.modalMode = 'command';
             void this.executeCommandLine(command);
           } else {
             this.statusMessage = 'Type a goal or /help to run commands.';
@@ -437,18 +438,28 @@ export class MaosTui {
           this.render();
           return;
         }
-
-        // When input text is empty on Tab 1, allow quick hotkeys:
-        if (this.modalInputText === '') {
-          if (key.name === 'q') {
-            this.exit();
-            return;
+        if (['pageup', 'pagedown', 'home', 'end'].includes(key.name) && this.transcript.length > 0) {
+          if (key.name === 'home') {
+            this.transcriptScrollOffset = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
+          } else if (key.name === 'end') {
+            this.transcriptScrollOffset = 0;
+          } else {
+            const step = Math.max(1, this.transcriptViewportRows - 1);
+            this.transcriptScrollOffset += key.name === 'pageup' ? step : -step;
+            this.transcriptScrollOffset = Math.max(
+              0,
+              Math.min(
+                this.transcriptScrollOffset,
+                Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows),
+              ),
+            );
           }
+          this.render();
+          return;
         }
 
         // Capture ANY typed character directly into the input box:
         if (str && !key.ctrl && !key.meta) {
-          this.modalMode = 'command';
           this.modalInputText += str;
           this.commandHistoryIndex = this.commandHistory.length;
           this.render();
@@ -456,7 +467,7 @@ export class MaosTui {
         }
       }
 
-      // Action hotkeys on other tabs or when unfocused:
+      // Action hotkeys on other tabs (Tabs 2, 3, 4):
       if (key.name === 'q') {
         this.exit();
         return;
@@ -464,27 +475,13 @@ export class MaosTui {
       if (key.name === 'tab') {
         this.activeTab = this.activeTab >= 4 ? 1 : this.activeTab + 1;
         this.statusMessage = `Switched to View [${this.activeTab}].`;
-        this.modalMode = this.activeTab === 1 ? 'command' : 'none';
         this.render();
         return;
       }
-      if (
-        this.activeTab === 1 &&
-        this.transcript.length > 0 &&
-        ['pageup', 'pagedown', 'home', 'end'].includes(key.name)
-      ) {
-        if (key.name === 'home') {
-          this.transcriptScrollOffset = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
-        } else if (key.name === 'end') {
-          this.transcriptScrollOffset = 0;
-        } else {
-          const step = Math.max(1, this.transcriptViewportRows - 1);
-          this.transcriptScrollOffset += key.name === 'pageup' ? step : -step;
-          this.transcriptScrollOffset = Math.max(
-            0,
-            Math.min(this.transcriptScrollOffset, this.transcriptRenderedRowCount),
-          );
-        }
+      if (key.name === 'return' || key.name === '/' || str === '/') {
+        this.activeTab = 1;
+        if (str === '/') this.modalInputText = '/';
+        this.statusMessage = 'Command prompt active.';
         this.render();
         return;
       }
@@ -812,9 +809,6 @@ export class MaosTui {
     this.externalCommandRunning = true;
     this.activeTab = 1;
     this.transcriptScrollOffset = 0;
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
-    process.stdin.pause();
-    process.stdout.write('\x1b[?25h');
     this.appendTranscript(`\n$ ${label}`);
     this.statusMessage = `${label}...`;
     this.render();
@@ -832,8 +826,14 @@ export class MaosTui {
         this.commandOutputRemainder = '';
       }
 
-      if (process.stdin.isTTY) process.stdin.setRawMode(true);
-      process.stdin.resume();
+      if (process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(true);
+        } catch {}
+      }
+      try {
+        process.stdin.resume();
+      } catch {}
       process.stdout.write('\x1b[?25l');
       const succeeded = !error && code === 0;
       this.statusMessage = error
@@ -859,7 +859,7 @@ export class MaosTui {
     };
 
     try {
-      const child = spawn(command, args, { cwd, env: process.env, stdio: ['inherit', 'pipe', 'pipe'] });
+      const child = spawn(command, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk: string) => this.appendCommandOutput(chunk));
@@ -1052,33 +1052,30 @@ export class MaosTui {
     }
     lines.push(c.slateBorder('─'.repeat(W)));
     const hotkeys = (
-      this.modalMode !== 'none'
+      this.modalMode !== 'none' && this.modalMode !== 'command'
         ? [
-            `${c.boldWhite('Enter')} ${c.slateMuted(this.modalMode === 'command' ? 'Execute' : 'Dispatch')}`,
+            `${c.boldWhite('Enter')} ${c.slateMuted('Dispatch')}`,
             `${c.boldWhite('Esc')} ${c.slateMuted('Cancel')}`,
             `${c.boldWhite('Backspace')} ${c.slateMuted('Delete')}`,
-            ...(this.modalMode === 'command' ? [`${c.boldWhite('↑ ↓')} ${c.slateMuted('History')}`] : []),
           ]
-        : [
-            ...(hasTranscriptSession
-              ? [
-                  `${c.boldWhite('Enter')} ${c.slateMuted('Prompt')}`,
-                  `${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`,
-                  `${c.boldWhite('Home/End')} ${c.slateMuted('Jump')}`,
-                ]
-              : []),
-            ...(this.activeTab === 1 && !hasTranscriptSession
-              ? [`${c.boldWhite('Enter')} ${c.slateMuted('Run')}`]
-              : []),
-            `${c.boldWhite('Tab')} ${c.slateMuted('Switch')}`,
-            `${c.boldWhite('↑ ↓')} ${c.slateMuted('Navigate')}`,
-            `${c.boldWhite('I')} ${c.violetBright('Ignite')}`,
-            `${c.boldWhite('G')} ${c.amber(`Model ${this.selectedModel.replace('gemma2:', '')}`)}`,
-            `${c.boldWhite('D')} ${c.pink('Studio')}`,
-            `${c.boldWhite('T')} ${c.emerald('Test')}`,
-            `${c.boldWhite('R')} ${c.cyan('Refresh')}`,
-            `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,
-          ]
+        : this.activeTab === 1
+          ? [
+              `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Command')}`,
+              `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+              ...(hasTranscriptSession ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
+              `${c.boldWhite('Esc')} ${c.slateMuted('Clear')}`,
+              `${c.cyanBright('/help')} ${c.slateMuted('Commands')}`,
+              `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
+            ]
+          : [
+              `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+              `${c.boldWhite('/')} ${c.slateMuted('Focus Prompt')}`,
+              `${c.boldWhite('G')} ${c.amber(`Model ${this.selectedModel.replace('gemma2:', '')}`)}`,
+              `${c.boldWhite('D')} ${c.pink('Studio')}`,
+              `${c.boldWhite('T')} ${c.emerald('Test')}`,
+              `${c.boldWhite('R')} ${c.cyan('Refresh')}`,
+              `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,
+            ]
     ).join('   ');
     lines.push(fullLine(hotkeys));
 
@@ -1116,15 +1113,13 @@ export class MaosTui {
       const innerW = Math.max(0, W - 4);
       const prefix = `${c.cyanBright('>')} ${c.slateBorder('│')}  `;
       const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix) - 1);
-      const commandText =
-        this.modalMode === 'command'
-          ? this.modalInputText
-            ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
-            : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`
-          : c.slateMuted('Type a goal or /help for commands');
-      const promptRow = `${c.cyanBright('│ ')}${prefix}${commandText}${c.cyanBright(' │')}`;
+      const commandText = this.modalInputText
+        ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
+        : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`;
+      const innerContent = prefix + commandText;
+      const promptRow = `${c.cyanBright('│ ')}${fitTerminalLine(innerContent, innerW)}${c.cyanBright(' │')}`;
       lines.push(centerTerminalLine(c.cyanBright('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'), W));
-      lines.push(fitTerminalLine(promptRow, W));
+      lines.push(promptRow);
       lines.push(centerTerminalLine(c.cyanBright('╰' + '─'.repeat(Math.max(0, W - 2)) + '╯'), W));
       return;
     }
@@ -1153,21 +1148,20 @@ export class MaosTui {
     lines.push('');
     lines.push('');
     lines.push('');
-    const commandPrompt =
-      this.modalMode === 'command'
-        ? this.modalInputText
-          ? `${c.white(fitTerminalTail(this.modalInputText, Math.max(0, promptW - 15)))}${c.boldWhite('█')}`
-          : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`
-        : c.slateMuted('Type a goal or /help for commands');
-    const promptContent = `${c.cyanBright('>')} ${c.slateBorder('│')}  ${commandPrompt}`;
+    const promptInnerW = promptW - 4;
+    const prefix = `${c.cyanBright('>')} ${c.slateBorder('│')}  `;
+    const inputWidth = Math.max(0, promptInnerW - terminalCellWidth(prefix) - 1);
+    const commandText = this.modalInputText
+      ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
+      : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`;
+    const innerContent = prefix + commandText;
+    const promptRow = `${c.cyanBright('│ ')}${fitTerminalLine(innerContent, promptInnerW)}${c.cyanBright(' │')}`;
     if (promptW >= 24) {
-      const promptInnerW = promptW - 4;
-      const promptRow = c.cyanBright('│ ') + fitTerminalLine(promptContent, promptInnerW) + c.cyanBright(' │');
       lines.push(centerTerminalLine(c.cyanBright('╭' + '─'.repeat(promptW - 2) + '╮'), W));
       lines.push(centerTerminalLine(promptRow, W));
       lines.push(centerTerminalLine(c.cyanBright('╰' + '─'.repeat(promptW - 2) + '╯'), W));
     } else {
-      lines.push(center(promptContent));
+      lines.push(center(innerContent));
     }
   }
 
