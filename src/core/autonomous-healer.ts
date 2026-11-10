@@ -658,8 +658,10 @@ export async function herdrSplitPane(opts: {
   direction?: 'right' | 'down';
   cwd?: string;
   noFocus?: boolean;
+  targetPane?: string;
 }): Promise<string> {
-  const args = ['pane', 'split', '--current', '--direction', opts.direction || 'right'];
+  const target = opts.targetPane ? ['--pane', opts.targetPane] : ['--current'];
+  const args = ['pane', 'split', ...target, '--direction', opts.direction || 'right'];
   if (opts.cwd) args.push('--cwd', opts.cwd);
   args.push(opts.noFocus === false ? '--focus' : '--no-focus');
   const { stdout } = await execHerdr(args);
@@ -671,6 +673,25 @@ export async function herdrSplitPane(opts: {
   } catch {
     throw new HealerError('HERDR_UNAVAILABLE', 'Could not parse `herdr pane split` JSON output.');
   }
+}
+
+/** Move a pane to a new tab or target pane. */
+export async function herdrMovePane(
+  paneId: string,
+  opts: { newTab?: boolean; label?: string; noFocus?: boolean },
+): Promise<void> {
+  const args = ['pane', 'move', paneId];
+  if (opts.newTab) args.push('--new-tab');
+  if (opts.label) args.push('--label', opts.label);
+  if (opts.noFocus) args.push('--no-focus');
+  await execHerdr(args);
+}
+
+/** Close a pane. Safe if already closed. */
+export async function herdrPaneClose(paneId: string): Promise<void> {
+  try {
+    await execHerdr(['pane', 'close', paneId]);
+  } catch {}
 }
 
 export async function isHerdrAvailable(): Promise<boolean> {

@@ -29,6 +29,8 @@ import {
   AutonomousHealer,
   HealAttempt,
   herdrSplitPane,
+  herdrMovePane,
+  herdrPaneClose,
   isHerdrAvailable,
   CliHerdrPaneReader,
 } from '../../core/autonomous-healer';
@@ -342,9 +344,24 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
         'utf-8',
       );
       const direction = i % 2 === 0 ? 'right' : 'down';
-      const paneId = await herdrSplitPane({ direction, cwd: wt.worktreePath, noFocus: true });
+      // Worker 0 splits from current pane, then moves to dedicated "Swarm Workers" tab.
+      // Workers 1..N split relative to Worker 0's pane inside that tab, keeping Tab 5 pristine!
+      const targetPane = i === 0 ? undefined : workers[0]?.paneId;
+      const paneId = await herdrSplitPane({ direction, cwd: wt.worktreePath, noFocus: true, targetPane });
+      if (i === 0) {
+        try {
+          await herdrMovePane(paneId, { newTab: true, label: 'Swarm Workers', noFocus: true });
+        } catch {
+          /* continue gracefully if tab move is not supported */
+        }
+      }
       const testCmd = resolveWorktreeTestCommand(wt.worktreePath);
-      herdrPaneRun(paneId, `echo [MAOS ignite] ${task.title.replace(/"/g, '')} && ${testCmd}`);
+      const safeTitle = task.title.replace(/["'`$\\]/g, '');
+      const runCmd =
+        process.platform === 'win32'
+          ? `Write-Host "[MAOS ignite] ${safeTitle}"; ${testCmd}`
+          : `echo "[MAOS ignite] ${safeTitle}" && ${testCmd}`;
+      herdrPaneRun(paneId, runCmd);
       workers.push({ index: i, title: task.title, agentId, branch, worktreePath: wt.worktreePath, paneId, taskFile });
       step.succeed(chalk.green(`Worker ${agentId} live in ${paneId} (${branch})`));
     } catch (err: unknown) {
@@ -399,6 +416,9 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
     await new Promise((r) => setTimeout(r, 4500));
     await healer.healOnce();
     healer.stop();
+    for (const w of workers) {
+      if (w.paneId) void herdrPaneClose(w.paneId);
+    }
     printMergeReport(cwd, workers, options.yes === true);
     return;
   }
@@ -408,6 +428,9 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   const shutdown = () => {
     console.log(chalk.cyan('\n\n🛑 Stopping swarm...'));
     healer.stop();
+    for (const w of workers) {
+      if (w.paneId) void herdrPaneClose(w.paneId);
+    }
     const stats = healer.getStats();
     console.log(
       chalk.gray(
