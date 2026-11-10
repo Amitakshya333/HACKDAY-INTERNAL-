@@ -968,7 +968,10 @@ export class MaosTui {
         if (rightText) {
           const left = `  ${label}`;
           const gap = Math.max(1, railW - visibleLength(left) - visibleLength(rightText));
-          sidebar[row] = pad(c.slateText(left) + ' '.repeat(gap) + c.white(rightText), railW);
+          const item = left + ' '.repeat(gap) + rightText;
+          sidebar[row] = selected
+            ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(item.padEnd(railW, ' ')), railW)
+            : pad(c.slateText(left) + ' '.repeat(gap) + c.white(rightText), railW);
         } else if (selected) {
           const active = `  ${label}`.padEnd(railW - 2, ' ') + '  ';
           sidebar[row] = pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(active), railW);
@@ -978,10 +981,9 @@ export class MaosTui {
       };
       const navTop = Math.max(1, Math.floor(bodyRows * 0.08));
       railItem(navTop, '⌂  Dashboard', 1);
-      railItem(navTop + 2, '◇  Agents', 1, true, String(this.herdrAgents.length));
-      railItem(navTop + 4, '>_ HERDR', 2);
-      railItem(navTop + 6, '▥  Telemetry', 3);
-      railItem(navTop + 8, '▤  Event Log', 4);
+      railItem(navTop + 2, '◇  Agents', 2, false, String(this.herdrAgents.length));
+      railItem(navTop + 4, '▥  Telemetry', 3);
+      railItem(navTop + 6, '▤  Event Log', 4);
       const settingsRow = Math.max(navTop + 10, bodyRows - 4);
       if (settingsRow - 1 >= 0 && settingsRow - 1 < bodyRows)
         sidebar[settingsRow - 1] = c.slateBorder('─'.repeat(railW));
