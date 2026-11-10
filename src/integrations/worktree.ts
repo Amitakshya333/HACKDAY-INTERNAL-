@@ -39,12 +39,20 @@ export interface WorktreeInfo {
 // ---- Helpers ----
 
 function gitExec(args: string[], cwd: string): string {
-  return execFileSync('git', ['-c', 'core.longpaths=true', ...args], {
-    cwd,
-    encoding: 'utf-8',
-    timeout: 30000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }).trim();
+  try {
+    return execFileSync('git', ['-c', 'core.longpaths=true', ...args], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch (err: any) {
+    const stderr = err.stderr ? err.stderr.toString().trim() : '';
+    const msg = stderr ? `Git command failed (git ${args.join(' ')}): ${stderr}` : err.message;
+    const cleanError = new Error(msg);
+    (cleanError as any).stderr = stderr;
+    throw cleanError;
+  }
 }
 
 function gitSafe(args: string[], cwd: string): string | null {
@@ -83,6 +91,9 @@ export function isWorktreeSupported(cwd: string): boolean {
  * If it exists on a different branch, remove and recreate.
  * If it doesn't exist, create it fresh.
  *
+ * Uses force checkout (-f) and atomic branch reset (-B) against current HEAD
+ * to guarantee resilience against previous uncleaned runs or branch collisions.
+ *
  * Returns the absolute path to the worktree directory.
  */
 export function ensureWorktree(agentId: string, branchName: string, cwd: string): WorktreeInfo {
@@ -99,20 +110,36 @@ export function ensureWorktree(agentId: string, branchName: string, cwd: string)
     removeWorktree(agentId, cwd);
   }
 
+  // Ensure any orphaned git worktree metadata for this path is pruned
+  gitSafe(['worktree', 'prune'], cwd);
+
+  // If directory still lingers on disk (e.g. unlinked empty directory), remove it
+  if (fs.existsSync(wtPath)) {
+    try {
+      fs.rmSync(wtPath, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+
   // Ensure the base directory exists
   const baseDir = getWorktreeBaseDir(cwd);
   if (!fs.existsSync(baseDir)) {
     fs.mkdirSync(baseDir, { recursive: true });
   }
 
-  // Ensure the branch exists (create from HEAD if not)
-  const branchExists = gitSafe(['rev-parse', '--verify', branchName], cwd);
-  if (!branchExists) {
-    gitExec(['branch', branchName], cwd);
+  // Add worktree using force + quiet + create/reset branch (-B) to current HEAD
+  // This avoids branch collisions, checkout collisions, and noisy progress output on stderr.
+  try {
+    gitExec(['worktree', 'add', '-f', '-q', '-B', branchName, wtPath, 'HEAD'], cwd);
+  } catch {
+    // Fallback: if -B fails (e.g. older git), try standard add with existing branch check
+    const branchExists = gitSafe(['rev-parse', '--verify', branchName], cwd);
+    if (!branchExists) {
+      gitSafe(['branch', branchName], cwd);
+    }
+    gitExec(['worktree', 'add', '--force', wtPath, branchName], cwd);
   }
-
-  // Create the worktree
-  gitExec(['worktree', 'add', wtPath, branchName], cwd);
 
   return { worktreePath: wtPath, branch: branchName, agentId, active: true };
 }
@@ -124,19 +151,21 @@ export function ensureWorktree(agentId: string, branchName: string, cwd: string)
 export function removeWorktree(agentId: string, cwd: string): void {
   const wtPath = getWorktreePath(cwd, agentId);
 
+  try {
+    gitSafe(['worktree', 'remove', wtPath, '--force'], cwd);
+  } catch {
+    /* best effort */
+  }
+
   if (fs.existsSync(wtPath)) {
     try {
-      gitExec(['worktree', 'remove', wtPath, '--force'], cwd);
+      fs.rmSync(wtPath, { recursive: true, force: true });
     } catch {
-      // If git worktree remove fails, try manual cleanup
-      try {
-        fs.rmSync(wtPath, { recursive: true, force: true });
-        gitSafe(['worktree', 'prune'], cwd);
-      } catch {
-        /* best effort */
-      }
+      /* best effort */
     }
   }
+
+  gitSafe(['worktree', 'prune'], cwd);
 }
 
 /**
