@@ -136,8 +136,8 @@ describe('Empirical Challenge: Loopback OpSec Gate', () => {
     });
 
     it('passes diagnostic check and confirms sovereign local loopback even with cloud API keys in env', () => {
-      process.env.ANTHROPIC_API_KEY = 'your-key-here-ant-empirical';
-      process.env.OPENAI_API_KEY = 'your-key-here-openai-empirical';
+      process.env.ANTHROPIC_API_KEY = 'mock';
+      process.env.OPENAI_API_KEY = 'mock';
 
       const loopbackConfig = {
         ollama: { host: '127.0.0.1', port: 11434 },
