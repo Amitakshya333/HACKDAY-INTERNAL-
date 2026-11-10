@@ -5,9 +5,10 @@
   "main": "./dist/cli/index.js",
   "types": "./dist/cli/index.d.ts",
   "bin": {
-    "maos": "./dist/cli/index.js",
+    "maos": "./dist/cli/maos-cli.js",
     "maos-industrial": "./dist/industrial/entrypoint.js",
-    "maosorch": "./dist/cli/index.js"
+    "maosorch": "./dist/cli/index.js",
+    "maos-oasis": "./dist/oasis/oasis-cli.js"
   },
   "files": [
     "dist/",
