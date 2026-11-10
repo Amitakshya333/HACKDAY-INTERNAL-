@@ -248,7 +248,7 @@ Return ONLY valid JSON.`;
         const a = agents[i] || { name: `Agent-${i + 1}`, role: 'Worker', color: '#8B5CF6', task: 'Subtask' };
         execSync(`herdr pane rename ${paneId} "${a.name} | ${a.role.slice(0, 16)}"`);
         execSync(`herdr pane report-agent ${paneId} --source maos --agent "${a.name}" --state working`);
-        const cmd = `npx tsx src/cli/worker-agent.ts --agent ${a.name.toLowerCase()} --name ${a.name} --role "${a.role}" --task "${a.task}" --color "${a.color}" --model gemma2:2b`;
+        const cmd = `cd "C:\\HACKDAY WINNER\\maos-core"; npx tsx src/cli/worker-agent.ts --agent ${a.name.toLowerCase()} --name ${a.name} --role "${a.role}" --task "${a.task}" --color "${a.color}" --model gemma2:2b`;
         execSync(`herdr pane run ${paneId} "${cmd}"`);
       }
     } catch {

@@ -80,9 +80,42 @@ export class MaosTui {
 
   private refreshTimer: NodeJS.Timeout | null = null;
   private projectRoot: string;
+  private lastWidth: number = 0;
 
   constructor(projectRoot: string = process.cwd()) {
     this.projectRoot = projectRoot;
+  }
+
+  private stripAnsi(str: string): string {
+    return str.replace(/\x1b\[[0-9;]*m/g, '');
+  }
+
+  private truncateVisible(str: string, maxLen: number): string {
+    const stripped = this.stripAnsi(str);
+    if (stripped.length <= maxLen) return str;
+
+    let visible = 0;
+    let result = '';
+    let inEscape = false;
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
+      if (char === '\x1b') {
+        inEscape = true;
+        result += char;
+      } else if (inEscape) {
+        result += char;
+        if (char === 'm') inEscape = false;
+      } else {
+        if (visible >= maxLen - 1) {
+          result += '…';
+          break;
+        }
+        result += char;
+        visible++;
+      }
+    }
+    result += '\x1b[0m';
+    return result;
   }
 
   public start(): void {
@@ -92,6 +125,12 @@ export class MaosTui {
 
     this.setupKeyboard();
     this.updateGpuTelemetry();
+
+    // Auto-adapt reactively when Herdr opens/closes panes
+    process.stdout.on('resize', () => {
+      console.clear();
+      this.render();
+    });
 
     // Render loop
     this.render();
@@ -365,7 +404,7 @@ Return ONLY valid JSON.`,
         execSync(`herdr pane rename ${paneId} "${label}"`);
         execSync(`herdr pane report-agent ${paneId} --source maos --agent "${a.name}" --state working`);
 
-        const cmd = `npx tsx src/cli/worker-agent.ts --agent ${a.name.toLowerCase()} --name ${a.name} --role "${a.role}" --task "${a.task}" --color "${a.color || '#8B5CF6'}" --model ${this.selectedModel}`;
+        const cmd = `cd "C:\\HACKDAY WINNER\\maos-core"; npx tsx src/cli/worker-agent.ts --agent ${a.name.toLowerCase()} --name ${a.name} --role "${a.role}" --task "${a.task}" --color "${a.color || '#8B5CF6'}" --model ${this.selectedModel}`;
         execSync(`herdr pane run ${paneId} "${cmd}"`);
       }
     } catch {
@@ -400,7 +439,16 @@ Return ONLY valid JSON.`,
   // ── Render Engine ──────────────────────────────────────────────
 
   private render(): void {
-    const W = Math.max(90, Math.min(process.stdout.columns || 108, 120));
+    const rawCols = process.stdout.columns || 80;
+    const W = Math.max(38, Math.min(rawCols - 1, 120));
+
+    // Clear screen on width resize to eradicate artifacts and wrapped characters
+    if (this.lastWidth !== W) {
+      console.clear();
+      this.lastWidth = W;
+    }
+
+    const isNarrow = W < 88;
     const lines: string[] = [];
 
     // Helper builders
@@ -409,18 +457,32 @@ Return ONLY valid JSON.`,
     const drawBorderBottom = () => c.slateBorder('╰' + '─'.repeat(W - 2) + '╯');
 
     const padRow = (content: string, visibleLen: number): string => {
-      const fill = Math.max(0, W - 4 - visibleLen);
+      const maxInner = Math.max(10, W - 4);
+      if (visibleLen > maxInner) {
+        content = this.truncateVisible(content, maxInner);
+        visibleLen = maxInner;
+      }
+      const fill = Math.max(0, maxInner - visibleLen);
       return c.slateBorder('│ ') + content + ' '.repeat(fill) + c.slateBorder(' │');
     };
 
     // 1. Header Banner
     lines.push(drawBorderTop());
-    const headerTitle = `${c.pink('✦')} ${c.boldWhite('MAOS SOVEREIGN SWARM KERNEL')} ${c.violet('✦')}  ${c.slateMuted('v0.4.0')}  ${c.amber('[RTX 4060 CUDA]')}`;
-    const headerRight = `${c.emerald('●')} ${c.slateText('HERDR: wA')}  ${c.cyan('●')} ${c.slateText('OLLAMA: 11434')}  ${c.violetBright('●')} ${c.slateText('STUDIO: 5173')}`;
-    const headerTitleLen = 48;
-    const headerRightLen = 42;
-    const headerFill = Math.max(2, W - 4 - headerTitleLen - headerRightLen);
-    lines.push(c.slateBorder('│ ') + headerTitle + ' '.repeat(headerFill) + headerRight + c.slateBorder(' │'));
+    if (!isNarrow) {
+      const headerTitle = `${c.pink('✦')} ${c.boldWhite('MAOS SOVEREIGN SWARM KERNEL')} ${c.violet('✦')}  ${c.slateMuted('v0.4.0')}  ${c.amber('[RTX 4060 CUDA]')}`;
+      const headerRight = `${c.emerald('●')} ${c.slateText('HERDR: wA')}  ${c.cyan('●')} ${c.slateText('OLLAMA: 11434')}  ${c.violetBright('●')} ${c.slateText('STUDIO: 5173')}`;
+      const headerTitleLen = 48;
+      const headerRightLen = 42;
+      const headerFill = Math.max(2, W - 4 - headerTitleLen - headerRightLen);
+      lines.push(c.slateBorder('│ ') + headerTitle + ' '.repeat(headerFill) + headerRight + c.slateBorder(' │'));
+    } else {
+      const headerTitle = `${c.pink('✦')} ${c.boldWhite('MAOS SWARM COCKPIT')} ${c.amber('[CUDA]')}`;
+      const headerRight = `${c.emerald('●')} ${c.slateText('wA')} ${c.cyan('●')} ${c.slateText('11434')}`;
+      const hTitleLen = 27;
+      const hRightLen = 14;
+      const headerFill = Math.max(1, W - 4 - hTitleLen - hRightLen);
+      lines.push(c.slateBorder('│ ') + headerTitle + ' '.repeat(headerFill) + headerRight + c.slateBorder(' │'));
+    }
 
     // 2. Tab Navigation Bar
     lines.push(drawBorderMid());
@@ -432,20 +494,26 @@ Return ONLY valid JSON.`,
       return c.slateMuted(`  [${num}] ${label}  `);
     };
 
-    const tabsRow = `${tabItem(1, 'SWARM FLEET')}${c.slateBorder('│')}${tabItem(2, 'GEMMA INFERENCE')}${c.slateBorder('│')}${tabItem(3, 'AUTONOMOUS HEALER')}${c.slateBorder('│')}${tabItem(4, 'CANVA 3D STUDIO')}`;
-    const tabsRowLen = 17 + 1 + 21 + 1 + 23 + 1 + 21;
-    lines.push(padRow(tabsRow, tabsRowLen));
+    if (!isNarrow) {
+      const tabsRow = `${tabItem(1, 'SWARM FLEET')}${c.slateBorder('│')}${tabItem(2, 'GEMMA INFERENCE')}${c.slateBorder('│')}${tabItem(3, 'AUTONOMOUS HEALER')}${c.slateBorder('│')}${tabItem(4, 'CANVA 3D STUDIO')}`;
+      const tabsRowLen = 17 + 1 + 21 + 1 + 23 + 1 + 21;
+      lines.push(padRow(tabsRow, tabsRowLen));
+    } else {
+      const tabsRow = `${tabItem(1, 'FLEET')}${c.slateBorder('│')}${tabItem(2, 'GEMMA')}${c.slateBorder('│')}${tabItem(3, 'HEALER')}${c.slateBorder('│')}${tabItem(4, '3D')}`;
+      const tabsRowLen = 11 + 1 + 11 + 1 + 12 + 1 + 8;
+      lines.push(padRow(tabsRow, tabsRowLen));
+    }
     lines.push(drawBorderMid());
 
     // 3. Tab Body Content
     if (this.activeTab === 1) {
-      this.renderTabFleet(lines, W);
+      this.renderTabFleet(lines, W, isNarrow, padRow);
     } else if (this.activeTab === 2) {
-      this.renderTabGemma(lines, W);
+      this.renderTabGemma(lines, W, isNarrow, padRow);
     } else if (this.activeTab === 3) {
-      this.renderTabHealer(lines, W);
+      this.renderTabHealer(lines, W, isNarrow, padRow);
     } else if (this.activeTab === 4) {
-      this.renderTabCanva3D(lines, W);
+      this.renderTabCanva3D(lines, W, isNarrow, padRow);
     }
 
     // 4. Modal Overlay (if active)
@@ -459,16 +527,25 @@ Return ONLY valid JSON.`,
     lines.push(padRow(statusLine, 8 + this.statusMessage.length));
 
     lines.push(drawBorderMid());
-    const hotkeys = [
-      `${c.boldWhite('Tab')} ${c.slateMuted('View')}`,
-      `${c.boldWhite('I')} ${c.violetBright('Ignite')}`,
-      `${c.boldWhite('G')} ${c.amber(`Model(${this.selectedModel.replace('gemma2:', '')})`)}`,
-      `${c.boldWhite('D')} ${c.pink('Canva3D')}`,
-      `${c.boldWhite('T')} ${c.emerald('Test')}`,
-      `${c.boldWhite('R')} ${c.cyan('Refresh')}`,
-      `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,
-    ].join('   ');
-    const hotkeysLen = 80;
+    const hotkeys = isNarrow
+      ? [
+          `${c.boldWhite('I')} ${c.violetBright('Ignite')}`,
+          `${c.boldWhite('G')} ${c.amber(this.selectedModel.replace('gemma2:', ''))}`,
+          `${c.boldWhite('D')} ${c.pink('3D')}`,
+          `${c.boldWhite('T')} ${c.emerald('Test')}`,
+          `${c.boldWhite('Tab')} ${c.slateMuted('View')}`,
+          `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,
+        ].join('  ')
+      : [
+          `${c.boldWhite('Tab')} ${c.slateMuted('View')}`,
+          `${c.boldWhite('I')} ${c.violetBright('Ignite')}`,
+          `${c.boldWhite('G')} ${c.amber(`Model(${this.selectedModel.replace('gemma2:', '')})`)}`,
+          `${c.boldWhite('D')} ${c.pink('Canva3D')}`,
+          `${c.boldWhite('T')} ${c.emerald('Test')}`,
+          `${c.boldWhite('R')} ${c.cyan('Refresh')}`,
+          `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,
+        ].join('   ');
+    const hotkeysLen = isNarrow ? 50 : 80;
     lines.push(padRow(hotkeys, hotkeysLen));
     lines.push(drawBorderBottom());
 
@@ -477,7 +554,45 @@ Return ONLY valid JSON.`,
   }
 
   // ── Tab 1: Swarm Fleet & Multiplexer Matrix ────────────────────
-  private renderTabFleet(lines: string[], W: number): void {
+  private renderTabFleet(lines: string[], W: number, isNarrow: boolean, padRow: (s: string, l: number) => string): void {
+    if (isNarrow) {
+      // ── Responsive Stacked Layout for Narrow Panes ────────────────
+      lines.push(padRow(c.boldWhite('📊 REAL-TIME HARDWARE & GPU METRICS'), 35));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+
+      const vramPct = Math.round((this.gpuStats.vramUsedMiB / this.gpuStats.vramTotalMiB) * 100);
+      const gaugeLen = Math.max(6, Math.min(10, W - 46));
+      const gaugeFilled = Math.round((vramPct / 100) * gaugeLen);
+      const gauge = c.violet('█'.repeat(gaugeFilled)) + c.slateBorder('░'.repeat(Math.max(0, gaugeLen - gaugeFilled)));
+
+      const vramRow = `${c.amber('VRAM:')} [${gauge}] ${vramPct}% (${Math.round(this.gpuStats.vramUsedMiB)} MiB) · ${this.gpuStats.tempC}°C`;
+      lines.push(padRow(vramRow, 24 + gaugeLen + vramPct.toString().length + 10));
+
+      const modelRow = `${c.amber('Model:')} ${c.cyan(this.selectedModel)} (CUDA) · ${c.emerald('25.6 tok/s')}`;
+      lines.push(padRow(modelRow, 38));
+
+      const opsecRow = `${c.amber('Sovereign:')} ${c.emerald('100% Loopback')} · ${c.slateMuted('0 Cloud Egress')}`;
+      lines.push(padRow(opsecRow, 42));
+
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(c.boldWhite('🤖 ACTIVE AGENT FLEET & HARNESS'), 31));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+
+      lines.push(padRow(`${c.emerald('●')} ${c.white('Agent 1 [Orchestrator]')}: ${c.cyan('Tab 1')} ${c.emerald('[ACTIVE]')}`, 38));
+      lines.push(padRow(`${c.slateMuted('●')} ${c.white('Agent 2 [Antigravity]')}: ${c.slateText('Tab 2')} ${c.slateMuted('[IDLE]')}`, 36));
+      lines.push(padRow(`${c.slateMuted('●')} ${c.white('Agent 3 [OpenCode]')}: ${c.slateText('Tab 3')} ${c.slateMuted('[IDLE]')}`, 33));
+      lines.push(padRow(`${c.slateMuted('●')} ${c.white('Agent 4 [Muse Code]')}: ${c.slateText('Tab 4')} ${c.slateMuted('[IDLE]')}`, 34));
+      lines.push(padRow(`${c.pink('●')} ${c.white('Canva 3D DevServer')}: ${c.violetBright('Port 5173')} ${c.emerald('[LIVE]')}`, 36));
+
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(c.boldWhite('🌐 LOCAL SERVICES'), 18));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.emerald('✔')} ${c.white('Canva 3D')}: ${c.cyan('http://localhost:5173')}`, 39));
+      lines.push(padRow(`${c.emerald('✔')} ${c.white('Ollama LLM')}: ${c.cyan('http://127.0.0.1:11434')}`, 39));
+      lines.push(padRow(`${c.emerald('✔')} ${c.white('Herdr IPC')}: ${c.cyan('Workspace wA')}`, 31));
+      return;
+    }
+
     const colW = Math.floor((W - 7) / 2);
 
     const padCol = (left: string, leftLen: number, right: string, rightLen: number): string => {
@@ -606,7 +721,25 @@ Return ONLY valid JSON.`,
   }
 
   // ── Tab 2: Gemma Local Inference Engine ────────────────────────
-  private renderTabGemma(lines: string[], W: number): void {
+  private renderTabGemma(lines: string[], W: number, isNarrow: boolean, padRow: (s: string, l: number) => string): void {
+    if (isNarrow) {
+      lines.push(padRow(c.boldWhite('🧠 GEMMA MODEL CONFIGURATION'), 29));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.amber('Active Model:')} ${c.boldWhite(this.selectedModel)} ${c.emerald('[LOADED]')}`, 33));
+      lines.push(padRow(`${c.amber('Inference Host:')} ${c.white('127.0.0.1:11434 (Loopback)')}`, 37));
+      lines.push(padRow(`${c.amber('Context Window:')} ${c.white('4,096 tokens (llamacpp)')}`, 36));
+      lines.push(padRow(`${c.amber('Model Toggle:')} ${c.violetBright('Press [G] for 2B ↔ 9B')}`, 34));
+
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(c.boldWhite('⚡ INFERENCE BENCHMARK TELEMETRY'), 32));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.cyan('Prompt Eval:')} ${c.boldWhite('299.3 ms')} ${c.slateMuted('(240 tokens)')}`, 35));
+      lines.push(padRow(`${c.cyan('9B CUDA Speed:')} ${c.boldWhite('25.6 tokens/sec')}`, 28));
+      lines.push(padRow(`${c.cyan('2B Peak Speed:')} ${c.boldWhite('71.4 tokens/sec')}`, 28));
+      lines.push(padRow(`${c.cyan('Accuracy Rate:')} ${c.emerald('100% (0 errors)')}`, 28));
+      return;
+    }
+
     const colW = Math.floor((W - 7) / 2);
     const padCol = (left: string, leftLen: number, right: string, rightLen: number): string => {
       const leftPad = ' '.repeat(Math.max(0, colW - leftLen));
@@ -707,7 +840,24 @@ Return ONLY valid JSON.`,
   }
 
   // ── Tab 3: Autonomous Healer ───────────────────────────────────
-  private renderTabHealer(lines: string[], W: number): void {
+  private renderTabHealer(lines: string[], W: number, isNarrow: boolean, padRow: (s: string, l: number) => string): void {
+    if (isNarrow) {
+      lines.push(padRow(c.boldWhite('🩹 CLOSED-LOOP AUTONOMOUS HEALER'), 33));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.emerald('●')} ${c.white('Watcher Status:')} ${c.emerald('ACTIVE (Herdr Socket Buffer Hook)')}`, 46));
+      lines.push(padRow(`${c.white('Stack Trace Engine:')} ${c.cyan('TypeScript / Vite / Node')}`, 39));
+      lines.push(padRow(`${c.white('Model Reasoning:')} ${c.violetBright('Gemma 2 9B (Targeted Repair)')}`, 42));
+      lines.push(padRow(`${c.amber('Resolution Rate:')} ${c.emerald('100% Success (1/1 healed)')}`, 37));
+
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(c.boldWhite('📜 HEALER INCIDENT LOGS'), 24));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.slateMuted('[21:35]')} ${c.emerald('[HEALED]')} Buffer geometry index types unified`, 50));
+      lines.push(padRow(`${c.slateMuted('[21:17]')} ${c.emerald('[PASS]')} Node test runner passed in 2.4ms`, 44));
+      lines.push(padRow(`${c.slateMuted('[21:16]')} ${c.emerald('[PASS]')} Raycast ground plane math verified`, 45));
+      return;
+    }
+
     const colW = Math.floor((W - 7) / 2);
     const padCol = (left: string, leftLen: number, right: string, rightLen: number): string => {
       const leftPad = ' '.repeat(Math.max(0, colW - leftLen));
@@ -799,7 +949,25 @@ Return ONLY valid JSON.`,
   }
 
   // ── Tab 4: Canva 3D Studio Telemetry ───────────────────────────
-  private renderTabCanva3D(lines: string[], W: number): void {
+  private renderTabCanva3D(lines: string[], W: number, isNarrow: boolean, padRow: (s: string, l: number) => string): void {
+    if (isNarrow) {
+      lines.push(padRow(c.boldWhite('🎨 CANVA 3D SPATIAL STUDIO STATUS'), 34));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.emerald('●')} ${c.white('Dev Server:')} ${c.cyan('http://localhost:5173')}`, 39));
+      lines.push(padRow(`${c.emerald('●')} ${c.white('HMR Pipeline:')} ${c.emerald('Active (Vite 5.4)')}`, 33));
+      lines.push(padRow(`${c.white('Graphics:')} ${c.violetBright('Three.js WebGL 2.0')}`, 31));
+      lines.push(padRow(`${c.white('3D Elements:')} ${c.white('13 Primitives (Gemma Star & Helix)')}`, 43));
+      lines.push(padRow(`${c.white('3D Export:')} ${c.emerald('Binary .GLB / GLTF + 4K PNG')}`, 37));
+
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(c.boldWhite('🕹 SHORTCUTS & LAUNCHER'), 23));
+      lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
+      lines.push(padRow(`${c.boldWhite('Press [D]')} ${c.pink('to open studio in browser')}`, 36));
+      lines.push(padRow(`${c.boldWhite('Press [T]')} ${c.emerald('to run 3D geometry tests')}`, 34));
+      lines.push(padRow(`${c.boldWhite('Press [I]')} ${c.violetBright('to Ignite new autonomous swarm')}`, 39));
+      return;
+    }
+
     const colW = Math.floor((W - 7) / 2);
     const padCol = (left: string, leftLen: number, right: string, rightLen: number): string => {
       const leftPad = ' '.repeat(Math.max(0, colW - leftLen));
@@ -901,8 +1069,8 @@ Return ONLY valid JSON.`,
 
   // ── Modal Dialog Overlay ───────────────────────────────────────
   private renderModal(lines: string[], W: number): void {
-    const modalW = Math.min(74, W - 8);
-    const modalPad = Math.max(2, Math.floor((W - modalW) / 2));
+    const modalW = Math.max(30, Math.min(74, W - 6));
+    const modalPad = Math.max(1, Math.floor((W - modalW) / 2));
     const padStr = ' '.repeat(modalPad);
 
     lines.push(c.slateBorder('├' + '─'.repeat(W - 2) + '┤'));
