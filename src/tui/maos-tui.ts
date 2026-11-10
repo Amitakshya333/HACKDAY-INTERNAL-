@@ -139,7 +139,8 @@ function centerTerminalLine(value: string, width: number): string {
   const valueWidth = terminalCellWidth(value);
   if (valueWidth >= width) return fitTerminalLine(value, width);
   const left = Math.floor((width - valueWidth) / 2);
-  return ' '.repeat(left) + value + ' '.repeat(width - valueWidth - left);
+  const reset = value.includes('\u001b') ? '\u001b[0m' : '';
+  return ' '.repeat(left) + value + reset + ' '.repeat(Math.max(0, width - valueWidth - left));
 }
 
 function fitTerminalTail(value: string, width: number): string {
@@ -345,17 +346,40 @@ export class MaosTui {
   }
 
   private setupKeyboard(): void {
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
+    if (process.stdin.setRawMode) {
+      try {
+        process.stdin.setRawMode(true);
+      } catch {}
     }
-    process.stdin.resume();
+    try {
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+    } catch {}
     readline.emitKeypressEvents(process.stdin);
 
     process.stdin.on('keypress', (str, key) => {
-      if (!key) return;
+      // Synthesize key object if undefined from readline on raw Windows stream
+      if (!key) {
+        if (!str) return;
+        key = {
+          name:
+            str === '\r' || str === '\n'
+              ? 'return'
+              : str === '\x1b'
+                ? 'escape'
+                : str === '\x08' || str === '\x7f'
+                  ? 'backspace'
+                  : str === '\t'
+                    ? 'tab'
+                    : str,
+          ctrl: str === '\x03',
+          meta: false,
+          shift: false,
+        };
+      }
 
       // Handle Ctrl+C to always quit immediately
-      if (key.ctrl && key.name === 'c') {
+      if ((key.ctrl && key.name === 'c') || str === '\x03') {
         this.exit();
         return;
       }
@@ -399,9 +423,16 @@ export class MaosTui {
           return;
         }
         if (key.name === 'escape') {
-          this.modalInputText = '';
+          if (this.modalInputText !== '') {
+            this.modalInputText = '';
+            this.statusMessage = 'Input cleared.';
+          } else {
+            // Esc on empty input restores pristine home dashboard view
+            this.transcript = [];
+            this.transcriptScrollOffset = 0;
+            this.statusMessage = 'Returned to Home Dashboard.';
+          }
           this.commandHistoryIndex = this.commandHistory.length;
-          this.statusMessage = 'Input cleared.';
           this.render();
           return;
         }
@@ -624,9 +655,24 @@ export class MaosTui {
     }
     if (['dashboard', 'home', 'overview', '1'].includes(name)) {
       this.activeTab = 1;
+      this.transcript = [];
+      this.transcriptScrollOffset = 0;
       this.statusMessage = 'Dashboard opened.';
-      this.appendTranscript('Dashboard opened.');
       this.render();
+      return;
+    }
+    if (['clear', 'cls', 'clean', 'reset'].includes(name)) {
+      this.activeTab = 1;
+      this.transcript = [];
+      this.transcriptScrollOffset = 0;
+      this.statusMessage = 'Transcript cleared.';
+      this.render();
+      return;
+    }
+    if (name === 'demo') {
+      this.activeTab = 1;
+      this.transcript = [];
+      this.launchIgniteGoal('Build and deploy Canva 3D Spatial Studio');
       return;
     }
     if (['herdr', 'agents', 'gemma', '2'].includes(name)) {
@@ -970,7 +1016,7 @@ export class MaosTui {
   // ── Render Engine ──────────────────────────────────────────────
 
   private render(): void {
-    const W = Math.max(20, (process.stdout.columns || 120) - 1);
+    const W = Math.max(20, (process.stdout.columns || 120) - 2);
     const railW = W >= Math.max(113, MAOS_OASIS_LOGO_WIDTH + 27) ? 24 : 0;
     const mainW = W - railW - (railW ? 3 : 0);
     const lines: string[] = [];
