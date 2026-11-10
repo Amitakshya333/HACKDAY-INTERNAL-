@@ -1,4 +1,4 @@
-# 🏆 Hack Day 2026: MAOS-Gemma Live Demonstration Guide
+# 🏆 Hack Day 2026: MAOS Oasis Live Demonstration Guide
 
 ### *The Sovereign Multi-Pane Terminal Swarm Kernel*
 > **Run end-to-end multi-agent coding swarms with zero cloud API dependencies.**
@@ -8,7 +8,7 @@
 ## ⚡ The 90-Second Live Pitch & Demo Script
 
 ### 1. The Challenge (0:00 - 0:20)
-* *"Judges, modern AI coding tools are trapped in single-threaded chat boxes. When you work on critical, air-gapped infrastructure, cloud AI is completely unavailable. MAOS-Gemma turns local open-weight models into a living, physical terminal multi-agent operating system."*
+* *"Judges, modern AI coding tools are trapped in single-threaded chat boxes. When you work on critical, air-gapped infrastructure, cloud AI is completely unavailable. MAOS Oasis turns local open-weight models into a living, physical terminal multi-agent operating system."*
 
 ### 2. The Ignition (0:20 - 0:45)
 Run the unified swarm command:

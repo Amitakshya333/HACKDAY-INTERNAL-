@@ -1,4 +1,4 @@
-# 🏆 MAOS-Gemma: Hack Day 2026 Pitch Deck & Script
+# 🏆 MAOS Oasis: Hack Day 2026 Pitch Deck & Script
 ### *The Sovereign Multi-Pane Terminal Swarm Kernel*
 > **Tracks Hit:** Open Innovation Track (Best Use of Gemma & Best Open-Source AI Project) + Software Track (Resilient Engineering)
 
@@ -13,7 +13,7 @@
 
 ---
 
-## Slide 2: The Solution — MAOS-Gemma
+## Slide 2: The Solution — MAOS Oasis
 * **MAOS Core:** The orchestration brain — decomposes arbitrary tasks into non-conflicting dependency DAGs and isolated Git worktrees.
 * **Gemma Intelligence:** The sovereign on-device brain (fits comfortably in 8GB VRAM on an RTX 4060) acting as the spec architect and root-cause diagnostician.
 * **OpenCode Harness:** The execution home for Gemma — providing AST parsing, file diffing, and tool execution.
@@ -26,7 +26,7 @@
 
 ```text
 +------------------------------------+------------------------------------+
-| PANE 1: MAOS Swarm Kernel          | PANE 2: Gemma Coder (Worktree)     |
+| PANE 1: MAOS Oasis Swarm Kernel    | PANE 2: Gemma Coder (Worktree)     |
 | [IGNITE] Decomposing goal into     | Checking out git branch...         |
 | atomic parallel worktree tasks     | Writing auth-service passkey logic |
 +------------------------------------+------------------------------------+
@@ -46,7 +46,7 @@
 
 ## Slide 4: Why This Wins (Hackathon Alignment)
 
-| Track Requirement | How MAOS-Gemma Blows Past It |
+| Track Requirement | How MAOS Oasis Blows Past It |
 | :--- | :--- |
 | **Best Use of Gemma** | **Zero API Wrapper:** Runs locally on-device. Takes real physical terminal actions. Ingests raw compiler/terminal output instead of chat text. |
 | **Best Open-Source AI Project** | 100% MIT Licensed. Adapts an open-source model harness (OpenCode & Herdr). Introduces a compliant **Agent Skill** (`skills/maos-herdr/SKILL.md`). |

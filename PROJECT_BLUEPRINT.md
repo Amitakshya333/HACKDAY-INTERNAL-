@@ -1,4 +1,4 @@
-# 🚀 Project Blueprint: MAOS-Gemma
+# 🚀 Project Blueprint: MAOS Oasis
 ### *The Sovereign Multi-Pane Terminal Swarm Kernel*
 **Hack Day 2026 — Open Innovation & Software Track Submission**
 
@@ -6,7 +6,7 @@
 
 ## 🎯 1. The Core Mission & Generalized Goal
 Our project is not a demo that solves a single hardcoded toy problem.  
-The generalized mission statement of **MAOS-Gemma** is:
+The generalized mission statement of **MAOS Oasis** is:
 
 ```bash
 maos ignite --gemma --harness herdr --goal "<Any task the user throws>"
@@ -115,17 +115,21 @@ Because the official 10-hour hackathon starts tomorrow, we must adhere strictly 
 
 ---
 
-## 🖥️ 9. Interactive Mission Control TUI (`src/tui/maos-tui.ts`)
+## 🖥️ 9. MAOS Oasis Mission Control TUI (`src/tui/maos-tui.ts`)
 * **Commands:** `maos tui` or `npm run tui` (or default `maos` action)
 * **Design Philosophy:** Antigravity CLI & Herdr tier polish — zero-flicker double-buffered rendering, cyberpunk glowing palette, live GPU hardware polling, and keyboard-driven cockpit controls.
 * **Views / Tabs:**
-  - `[1] SWARM FLEET`: 4-agent status tiles, live Herdr pane matrix (`wA:p1`, `wA:p6`, `wA:p7`, `wA:pA`, `wA:pQ`, `wA:pV`), real-time GPU VRAM gauge, thermal monitor, and scrolling activity logs.
-  - `[2] GEMMA INFERENCE`: Active model inspector, benchmark telemetry (`25.6 tok/s` on 9B, `71.4 tok/s` on 2B), prompt eval latency, and live model toggling.
-  - `[3] AUTONOMOUS HEALER`: Closed-loop error interception hook, stack trace parser stats, and live hotpatch incident logs.
-  - `[4] CANVA 3D STUDIO`: Spatial studio status, Three.js pipeline telemetry, and 1-click browser launcher.
+  - `[1] DASHBOARD`: Centered MAOS Oasis welcome screen and goal entry point; the header keeps model, GPU, and VRAM telemetry visible, and the side rail shows the four-agent count.
+  - `[2] HERDR + GEMMA INFERENCE`: Herdr pane matrix and local service connections, model inspector, benchmark telemetry (`25.6 tok/s` on 9B, `71.4 tok/s` on 2B), prompt eval latency, and live model toggling.
+  - `[3] TELEMETRY`: GPU metrics, closed-loop healer status, stack trace parser stats, and hotpatch incident telemetry.
+  - `[4] EVENT LOG`: Recent swarm activity alongside Canva 3D studio status, pipeline telemetry, and 1-click browser launcher.
 * **Interactive Hotkeys:**
-  - `Tab` / `[1-4]`: Switch view tabs with zero flicker
-  - `[I]`: Instant Swarm Ignite modal overlay
+  - `Tab` / `[1-4]` / `↑` / `↓`: Switch view tabs
+  - `[Enter]` or `/`: Open the command line; enter a goal to run the existing Gemma + Herdr ignite flow
+  - Slash commands: `/dashboard`, `/herdr`, `/telemetry`, `/events`, `/model 2b|9b`, `/ignite <goal>`, `/plan <goal>`, `/settings`
+  - `/help`: Show commands in the Dashboard session transcript; command output is retained and scrollable with `PageUp` / `PageDown` (`Home` / `End` jump)
+  - `/maos <command>`: Run an existing MAOS Core CLI command and stream its output into the Dashboard session transcript
+  - `[I]`: Open the Ignite modal with the sample task
   - `[G]`: Hot-toggle Gemma model (`gemma2:2b` ↔ `gemma2:9b`)
   - `[D]`: Open Canva 3D Studio in browser (`http://localhost:5173`)
   - `[T]`: Trigger 3D geometry & raycast test suites
@@ -135,7 +139,7 @@ Because the official 10-hour hackathon starts tomorrow, we must adhere strictly 
 
 ---
 
-## ⚛️ 10. Ink React TUI Integration (`src/tui/maos-ink.tsx`)
+## ⚛️ 10. MAOS Oasis Ink React TUI Integration (`src/tui/maos-ink.tsx`)
 * **Technology:** [Vadim Demedes' Ink 4.4](https://github.com/vadimdemedes/ink) (React 18 + TypeScript + esbuild ESM)
 * **Command:** `npm run ink`
 * **Dynamic Workflow Implemented:**

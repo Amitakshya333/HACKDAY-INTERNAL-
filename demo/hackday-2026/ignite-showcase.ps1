@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# 🏆 MAOS-GEMMA: HACK DAY 2026 1-CLICK SHOWCASE LAUNCHER
+# 🏆 MAOS OASIS: HACK DAY 2026 1-CLICK SHOWCASE LAUNCHER
 # Run this script to execute the full physical multi-pane live demonstration.
 # ==============================================================================
 
@@ -16,7 +16,7 @@ $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 Set-Location $ProjectRoot
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " 🚀 MAOS-GEMMA: SOVEREIGN TERMINAL SWARM SHOWCASE" -ForegroundColor Green
+Write-Host " 🚀 MAOS OASIS: SOVEREIGN TERMINAL SWARM SHOWCASE" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Project Root : $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "Target Goal  : $Goal" -ForegroundColor Yellow
@@ -36,7 +36,7 @@ Write-Host "✅ Pre-flight passed: 47/47 tests green." -ForegroundColor Green
 Write-Host ""
 
 # 2. Swarm Ignition
-Write-Host "▶ Igniting MAOS-Gemma Swarm Kernel..." -ForegroundColor Cyan
+Write-Host "▶ Igniting MAOS Oasis Swarm Kernel..." -ForegroundColor Cyan
 
 if ($DryRun) {
     npx tsx src/cli/index.ts ignite --gemma --model "$Model" --harness herdr --goal "$Goal" --dry-run

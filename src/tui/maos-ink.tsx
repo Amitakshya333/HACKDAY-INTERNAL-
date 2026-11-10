@@ -1,5 +1,5 @@
 /**
- * MAOS Sovereign Swarm Cockpit — Ink TUI (React for CLI)
+ * MAOS Oasis Swarm Cockpit — Ink TUI (React for CLI)
  * Built with Vadim Demedes' Ink 4 (React 18 + TypeScript)
  *
  * Workflow:
@@ -143,7 +143,7 @@ const MaosInkApp: React.FC = () => {
     setIsDelegating(true);
     setDelegationStep('Querying local Gemma (RTX 4060 GPU) to analyze complexity...');
 
-    const prompt = `You are the MAOS Swarm Architect.
+    const prompt = `You are the MAOS Oasis Swarm Architect.
 Analyze this goal: "${goal}".
 Decide how many parallel worker agents are needed (between 2 and 4).
 Respond in pure JSON matching this exact schema:
@@ -263,7 +263,7 @@ Return ONLY valid JSON.`;
       {/* 1. Header Banner */}
       <Box borderStyle="round" borderColor="#8B5CF6" paddingX={2} justifyContent="space-between">
         <Text bold color="#A78BFA">
-          ✦ MAOS SOVEREIGN SWARM COCKPIT ✦{' '}
+          ✦ MAOS OASIS SWARM COCKPIT ✦{' '}
           <Text color="#F59E0B">[RTX 4060 CUDA]</Text>
         </Text>
         <Text color="#94A3B8">

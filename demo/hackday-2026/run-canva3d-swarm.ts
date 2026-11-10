@@ -33,28 +33,32 @@ const SWARM_WORKERS: SwarmWorker[] = [
     id: 'gemma-worker-1',
     name: 'Gemma-Agent-Alpha',
     role: 'WebGL 3D Engine & Raycasting Drag-and-Drop',
-    gemmaPrompt: 'You are Gemma Agent Alpha. Generate the Three.js viewport configuration with OrbitControls, TransformControls (translate/rotate/scale), ground shadow plane, and raycasting 3D drop projection. Return a concise architectural status.',
+    gemmaPrompt:
+      'You are Gemma Agent Alpha. Generate the Three.js viewport configuration with OrbitControls, TransformControls (translate/rotate/scale), ground shadow plane, and raycasting 3D drop projection. Return a concise architectural status.',
     color: chalk.cyan,
   },
   {
     id: 'gemma-worker-2',
     name: 'Gemma-Agent-Beta',
     role: 'Canva 3D UI Dock & Draggable Primitives Catalog',
-    gemmaPrompt: 'You are Gemma Agent Beta. Detail the Canva-style sidebar dock with draggable 3D primitives (Cube, Sphere, Torus, Cylinder, Diamond, Torus Knot), floating quick-action pill, and drop coordinates listener. Return a concise architectural status.',
+    gemmaPrompt:
+      'You are Gemma Agent Beta. Detail the Canva-style sidebar dock with draggable 3D primitives (Cube, Sphere, Torus, Cylinder, Diamond, Torus Knot), floating quick-action pill, and drop coordinates listener. Return a concise architectural status.',
     color: chalk.magenta,
   },
   {
     id: 'gemma-worker-3',
     name: 'Gemma-Agent-Gamma',
     role: 'PBR Shaders, Glass Transmission & Studio Lighting',
-    gemmaPrompt: 'You are Gemma Agent Gamma. Configure MeshPhysicalMaterial with roughness, metalness, glass transmission (IOR 1.52), emissive glow, and 5 studio lighting presets (Cyberpunk, Studio, Sunset, Void, Pastel). Return a concise architectural status.',
+    gemmaPrompt:
+      'You are Gemma Agent Gamma. Configure MeshPhysicalMaterial with roughness, metalness, glass transmission (IOR 1.52), emissive glow, and 5 studio lighting presets (Cyberpunk, Studio, Sunset, Void, Pastel). Return a concise architectural status.',
     color: chalk.yellow,
   },
   {
     id: 'gemma-worker-4',
     name: 'Gemma-Agent-Delta',
     role: 'GLTF/GLB Exporter & Production Build Pipeline',
-    gemmaPrompt: 'You are Gemma Agent Delta. Configure Three.js GLTFExporter binary export, high-res canvas PNG snapshot capture, and Vite bundling pipeline. Return a concise architectural status.',
+    gemmaPrompt:
+      'You are Gemma Agent Delta. Configure Three.js GLTFExporter binary export, high-res canvas PNG snapshot capture, and Vite bundling pipeline. Return a concise architectural status.',
     color: chalk.green,
   },
 ];
@@ -94,7 +98,7 @@ async function callGemma(prompt: string): Promise<string> {
             resolve('Worker initialized and aligned.');
           }
         });
-      }
+      },
     );
 
     req.on('error', () => {
@@ -108,14 +112,44 @@ async function callGemma(prompt: string): Promise<string> {
 
 function renderBanner() {
   console.clear();
-  console.log(chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + chalk.bold.hex('#EC4899')('           MAOS IGNITE ✦ AUTONOMOUS GEMMA SWARM PRODUCTION KERNEL           ') + chalk.bold.hex('#8B5CF6')('║'));
-  console.log(chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Goal:    ` + chalk.bold.white('Build & Deploy Modern Canva 3D Spatial Design Studio') + `               ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Engine:  ` + chalk.bold.cyan(`Local Gemma (${MODEL}) via CUDA Loopback`) + `                  ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Harness: ` + chalk.bold.green('Herdr Sovereign Multiplexer (Tab 5 Focus)') + `                   ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` GPU:     ` + chalk.bold.yellow('NVIDIA GeForce RTX 4060 (8GB VRAM Resident)') + `                   ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'));
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      chalk.bold.hex('#EC4899')('     MAOS OASIS IGNITE ✦ AUTONOMOUS GEMMA SWARM PRODUCTION KERNEL           ') +
+      chalk.bold.hex('#8B5CF6')('║'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Goal:    ` +
+      chalk.bold.white('Build & Deploy Modern Canva 3D Spatial Design Studio') +
+      `               ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Engine:  ` +
+      chalk.bold.cyan(`Local Gemma (${MODEL}) via CUDA Loopback`) +
+      `                  ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Harness: ` +
+      chalk.bold.green('Herdr Sovereign Multiplexer (Tab 5 Focus)') +
+      `                   ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` GPU:     ` +
+      chalk.bold.yellow('NVIDIA GeForce RTX 4060 (8GB VRAM Resident)') +
+      `                   ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'),
+  );
   console.log('');
 }
 
@@ -148,7 +182,11 @@ async function main() {
   }
 
   console.log(chalk.gray('\n───────────────────────────────────────────────────────────────────────────'));
-  console.log(chalk.bold.green(`✔ All 4 Gemma Swarm agents completed their assigned components in ${((Date.now() - startTime) / 1000).toFixed(2)}s.\n`));
+  console.log(
+    chalk.bold.green(
+      `✔ All 4 Gemma Swarm agents completed their assigned components in ${((Date.now() - startTime) / 1000).toFixed(2)}s.\n`,
+    ),
+  );
 
   console.log(chalk.bold.hex('#A78BFA')('🧪 [STEP 3/4] Verifying Test Suites & Building Production Assets...'));
 
@@ -167,12 +205,23 @@ async function main() {
   }
 
   console.log(chalk.bold.hex('#A78BFA')('\n🌐 [STEP 4/4] Launching Canva 3D Live Dev Server...'));
-  console.log(chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════'));
+  console.log(
+    chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════'),
+  );
   console.log(chalk.bold.white('  🎉 CANVA 3D STUDIO IS LIVE AND READY FOR INTERACTION!'));
-  console.log(chalk.bold.hex('#60A5FA')('  👉 Local Studio URL:  ') + chalk.bold.underline.hex('#38BDF8')('http://localhost:5173'));
+  console.log(
+    chalk.bold.hex('#60A5FA')('  👉 Local Studio URL:  ') +
+      chalk.bold.underline.hex('#38BDF8')('http://localhost:5173'),
+  );
   console.log(chalk.bold.hex('#F472B6')('  🎨 Drag & drop 3D shapes from the sidebar directly onto the canvas!'));
-  console.log(chalk.bold.hex('#F472B6')('  🕹  Use Transform Gizmos (W: Move, E: Rotate, R: Scale), PBR Glass/Metal, and Export .GLB!'));
-  console.log(chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'));
+  console.log(
+    chalk.bold.hex('#F472B6')(
+      '  🕹  Use Transform Gizmos (W: Move, E: Rotate, R: Scale), PBR Glass/Metal, and Export .GLB!',
+    ),
+  );
+  console.log(
+    chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'),
+  );
 
   // Spawn vite in background
   const viteProcess = spawn('npx', ['vite', '--port', '5173', '--host'], {

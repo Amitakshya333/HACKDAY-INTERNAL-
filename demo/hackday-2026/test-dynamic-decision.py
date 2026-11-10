@@ -3,7 +3,7 @@ import json
 
 payload = {
     'model': 'gemma2:2b',
-    'prompt': '''You are the MAOS Swarm Architect.
+    'prompt': '''You are the MAOS Oasis Swarm Architect.
 Analyze this goal: "Build Canva 3D Spatial Studio with drag-and-drop, PBR shaders, and GLTF export".
 Decide how many parallel worker agents are needed (between 2 and 4).
 Respond in pure JSON matching this exact schema:

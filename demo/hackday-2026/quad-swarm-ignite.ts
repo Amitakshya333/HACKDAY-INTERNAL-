@@ -1,5 +1,5 @@
 /**
- * MAOS Quad-Pane Sovereign Swarm Launcher
+ * MAOS Oasis Quad-Pane Sovereign Swarm Launcher
  *
  * Spawns 4 physical, tiled Herdr panes (2x2 grid) in Tab 5:
  *   - Top-Left:     Agent-Alpha (3D WebGL Engine & Raycasting)
@@ -67,13 +67,38 @@ function execHerdr(cmd: string): string {
 
 async function main() {
   console.clear();
-  console.log(chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + chalk.bold.hex('#EC4899')('       MAOS IGNITE ✦ QUAD-PANE PHYSICAL MULTIPLEXED GEMMA SWARM             ') + chalk.bold.hex('#8B5CF6')('║'));
-  console.log(chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Multiplexer: ` + chalk.bold.green('Herdr Sovereign Tiled Multiplexer (Tab 5 Focus)') + `            ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Model:       ` + chalk.bold.cyan(`Local Gemma (${MODEL}) via RTX 4060 CUDA Loopback`) + `              ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Layout:      ` + chalk.bold.yellow('2x2 Quad Grid (4 Physical Dedicated Panes)') + `                   ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'));
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      chalk.bold.hex('#EC4899')(' MAOS OASIS IGNITE ✦ QUAD-PANE PHYSICAL MULTIPLEXED GEMMA SWARM             ') +
+      chalk.bold.hex('#8B5CF6')('║'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Multiplexer: ` +
+      chalk.bold.green('Herdr Sovereign Tiled Multiplexer (Tab 5 Focus)') +
+      `            ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Model:       ` +
+      chalk.bold.cyan(`Local Gemma (${MODEL}) via RTX 4060 CUDA Loopback`) +
+      `              ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Layout:      ` +
+      chalk.bold.yellow('2x2 Quad Grid (4 Physical Dedicated Panes)') +
+      `                   ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'),
+  );
   console.log('');
 
   // 1. Inspect Herdr panes in Tab 5
@@ -122,7 +147,9 @@ async function main() {
 
     execHerdr(`pane rename ${paneId} "${label}"`);
     execHerdr(`pane report-agent ${paneId} --source maos --agent "${cfg.agent}" --state working`);
-    console.log(`   ${chalk.hex(cfg.color)('●')} Pane ${chalk.bold.white(paneId)} labeled: ${chalk.bold.hex(cfg.color)(label)}`);
+    console.log(
+      `   ${chalk.hex(cfg.color)('●')} Pane ${chalk.bold.white(paneId)} labeled: ${chalk.bold.hex(cfg.color)(label)}`,
+    );
   }
 
   console.log(chalk.bold.green(`✔ All 4 Herdr panes assigned dedicated swarm personas.\n`));
@@ -139,10 +166,14 @@ async function main() {
     execHerdr(`pane run ${paneId} "${workerCmd}"`);
   }
 
-  console.log('\n' + chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════'));
+  console.log(
+    '\n' + chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════'),
+  );
   console.log(chalk.bold.white('  🎉 4-PANE PHYSICAL GEMMA SWARM IS LIVE & STREAMING IN TAB 5!'));
   console.log(chalk.gray('  Switch to Tab 5 in Herdr to watch all 4 panes reason, stream, and compile concurrently.'));
-  console.log(chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'));
+  console.log(
+    chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'),
+  );
 }
 
 main().catch(console.error);
