@@ -1,6 +1,6 @@
 ---
 name: maos-herdr
-description: Operate MAOS-Gemma autonomous worker panes via the Herdr terminal multiplexer with the OpenCode plus local Gemma harness. Use when tiling panes, dispatching isolated worktree agents, running parallel builds and tests, or healing red failures for the maos ignite workflow.
+description: Operate MAOS Oasis autonomous worker panes via the Herdr terminal multiplexer with the OpenCode plus local Gemma harness. Use when tiling panes, dispatching isolated worktree agents, running parallel builds and tests, or healing red failures for the maos ignite workflow.
 license: MIT
 allowed-tools: read_file write_file list_dir run_command search_code git_commit share_knowledge request_from_team respond_to_team task_complete
 metadata:
@@ -15,7 +15,7 @@ metadata:
 
 ## Overview
 
-MAOS-Gemma is a sovereign multi-pane terminal swarm kernel.
+MAOS Oasis is a sovereign multi-pane terminal swarm kernel.
 One goal command drives it:
 
 ```bash

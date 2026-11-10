@@ -1,5 +1,5 @@
 """
-MAOS Sovereign Swarm Cockpit — Textual TUI
+MAOS Oasis Swarm Cockpit — Textual TUI
 Built with Textual (Python 3.14) for Hack Day 2026.
 
 Workflow:
@@ -141,9 +141,9 @@ DataTable {
 """
 
 class MaosCockpitApp(App):
-    """Textual TUI for MAOS Sovereign Swarm & Gemma Engine."""
+    """Textual TUI for MAOS Oasis and its local Gemma inference engine."""
 
-    TITLE = "✦ MAOS SOVEREIGN SWARM COCKPIT ✦"
+    TITLE = "✦ MAOS OASIS SWARM COCKPIT ✦"
     SUB_TITLE = "Gemma 2 on CUDA + Herdr Physical Multiplexer"
     CSS = CSS
 
@@ -293,7 +293,7 @@ class MaosCockpitApp(App):
         summary.update(f"Gemma is analyzing goal complexity on RTX 4060...")
 
         # 1. Ask Gemma to decompose and decide pane count
-        prompt = f"""You are the MAOS Swarm Architect.
+        prompt = f"""You are the MAOS Oasis Swarm Architect.
 Analyze this goal: "{goal}".
 Decide how many parallel worker agents are needed (between 2 and 4).
 Respond in pure JSON matching this exact schema:

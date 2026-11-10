@@ -1,5 +1,5 @@
 /**
- * MAOS Sovereign Autonomous Coder — Unassisted Gemma Engine
+ * MAOS Oasis Autonomous Coder — Unassisted Gemma Engine
  *
  * Demonstrates 100% unassisted, autonomous code generation,
  * compilation verification, and self-healing using local Gemma on CUDA.
@@ -40,7 +40,7 @@ interface GenerationMetrics {
  */
 async function streamGemmaCode(
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
 ): Promise<{ code: string; rawResponse: string; metrics: GenerationMetrics }> {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify({
@@ -74,7 +74,10 @@ async function streamGemmaCode(
       },
       (res) => {
         res.on('data', (chunk: Buffer) => {
-          const lines = chunk.toString().split('\n').filter((l) => l.trim().length > 0);
+          const lines = chunk
+            .toString()
+            .split('\n')
+            .filter((l) => l.trim().length > 0);
           for (const line of lines) {
             try {
               const data = JSON.parse(line);
@@ -99,7 +102,7 @@ async function streamGemmaCode(
         res.on('end', () => {
           const totalDurationMs = Date.now() - startTime;
           const evalDurationMs = evalDurationNs / 1_000_000 || totalDurationMs;
-          const tokensPerSecond = (generatedTokens / (evalDurationMs / 1000)) || 0;
+          const tokensPerSecond = generatedTokens / (evalDurationMs / 1000) || 0;
 
           const metrics: GenerationMetrics = {
             totalDurationMs,
@@ -119,7 +122,7 @@ async function streamGemmaCode(
 
           resolve({ code, rawResponse, metrics });
         });
-      }
+      },
     );
 
     req.on('error', (err) => reject(err));
@@ -140,14 +143,44 @@ function verifyBuild(): { success: boolean; errorOutput?: string } {
 
 async function main() {
   console.clear();
-  console.log(chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + chalk.bold.hex('#EC4899')('           MAOS ✦ 100% UNASSISTED AUTONOMOUS GEMMA CODE GENERATION          ') + chalk.bold.hex('#8B5CF6')('║'));
-  console.log(chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'));
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Model:    ` + chalk.bold.cyan(`${MODEL} (Local CUDA Inference, No Cloud API)`) + `          ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Mode:     ` + chalk.bold.yellow('Zero Human / Assistant Assistance (Pure Raw Model Output)') + `     ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Target:   ` + chalk.bold.white('Procedural 3D Geometry Generators for Canva 3D') + `               ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('║') + ` Telemetry:` + chalk.bold.green(' --verbose live hardware stats enabled') + `                              ${chalk.bold.hex('#8B5CF6')('║')}`);
-  console.log(chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'));
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╔════════════════════════════════════════════════════════════════════════════╗'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      chalk.bold.hex('#EC4899')('       MAOS OASIS ✦ 100% UNASSISTED AUTONOMOUS GEMMA CODE GENERATION        ') +
+      chalk.bold.hex('#8B5CF6')('║'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╠════════════════════════════════════════════════════════════════════════════╣'),
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Model:    ` +
+      chalk.bold.cyan(`${MODEL} (Local CUDA Inference, No Cloud API)`) +
+      `          ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Mode:     ` +
+      chalk.bold.yellow('Zero Human / Assistant Assistance (Pure Raw Model Output)') +
+      `     ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Target:   ` +
+      chalk.bold.white('Procedural 3D Geometry Generators for Canva 3D') +
+      `               ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('║') +
+      ` Telemetry:` +
+      chalk.bold.green(' --verbose live hardware stats enabled') +
+      `                              ${chalk.bold.hex('#8B5CF6')('║')}`,
+  );
+  console.log(
+    chalk.bold.hex('#8B5CF6')('╚════════════════════════════════════════════════════════════════════════════╝'),
+  );
   console.log('');
 
   const systemPrompt = `You are a professional TypeScript and Three.js graphics engineer.
@@ -195,7 +228,7 @@ Return ONLY the \`\`\`typescript code block.`;
   let buildResult = verifyBuild();
 
   if (buildResult.success) {
-    console.log(chalk.bold.green('✔ SUCCESS: Gemma\'s code compiled cleanly with 0 errors on first attempt!'));
+    console.log(chalk.bold.green("✔ SUCCESS: Gemma's code compiled cleanly with 0 errors on first attempt!"));
   } else {
     console.log(chalk.bold.red('✖ COMPILER WARNING/ERROR DETECTED:'));
     console.log(chalk.red(buildResult.errorOutput));
@@ -223,10 +256,14 @@ Fix the error and return ONLY the corrected \`\`\`typescript code block.`;
     }
   }
 
-  console.log(chalk.bold.hex('#10B981')('\n═════════════════════════════════════════════════════════════════════════════'));
+  console.log(
+    chalk.bold.hex('#10B981')('\n═════════════════════════════════════════════════════════════════════════════'),
+  );
   console.log(chalk.bold.white('  🏁 UNASSISTED GEMMA GENERATION & VERIFICATION COMPLETE!'));
   console.log(chalk.gray(`  Check the newly created file: apps/canva-3d/src/engine/ProceduralGenerators.ts`));
-  console.log(chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'));
+  console.log(
+    chalk.bold.hex('#10B981')('═════════════════════════════════════════════════════════════════════════════\n'),
+  );
 }
 
 main().catch(console.error);

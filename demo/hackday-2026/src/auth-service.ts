@@ -1,6 +1,6 @@
 /**
  * Hack Day 2026 Demo Target: Authentication Service
- * Demonstrates autonomous race condition repair by MAOS-Gemma.
+ * Demonstrates autonomous race condition repair by MAOS Oasis.
  */
 
 export interface Session {
@@ -34,7 +34,7 @@ export class AuthService {
   public validateSession(token: string): boolean {
     const session = this.sessions.get(token);
     if (!session) return false;
-    
+
     // Valid session check
     return Date.now() < session.expiresAt;
   }
