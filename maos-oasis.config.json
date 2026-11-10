@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "oasisRoot": "C:\\HACKDAY WINNER\\maos-core",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "vramMB": 8188,
+    "tier": "high"
+  },
+  "model": {
+    "primary": "gemma2:9b",
+    "fallback": "gemma2:2b",
+    "tag": "gemma2:9b",
+    "contextTokens": 8192
+  },
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "autoStart": true
+  },
+  "dependencies": {
+    "herdr": {
+      "available": true,
+      "multiPaneEnabled": true
+    },
+    "opencode": {
+      "available": true,
+      "harnessEnabled": true
+    }
+  },
+  "team": {
+    "preset": "team",
+    "leadModel": "gemma2:9b",
+    "workerModel": "gemma2:9b",
+    "reviewerModel": "gemma2:2b"
+  }
+}

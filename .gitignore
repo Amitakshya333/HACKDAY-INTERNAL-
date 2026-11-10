@@ -59,3 +59,10 @@ rust/target/
 rust/test.txt
 
 .worktrees/
+
+# MAOS Oasis Runtime Internals (Ephemeral Agent Logs & State)
+.maos-oasis/
+.maos-oasis/queue/
+.maos-oasis/logs/
+.maos-oasis/status/
+.maos-oasis/*.log
