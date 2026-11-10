@@ -52,6 +52,13 @@ interface ActivityEvent {
   color: (s: string) => string;
 }
 
+interface MetricCard {
+  label: string;
+  value: string;
+  detail?: string;
+  color?: (value: string) => string;
+}
+
 const ANSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const MAOS_OASIS_LOGO_ROWS = [
@@ -171,6 +178,28 @@ function wrapTerminalLine(value: string, width: number): string[] {
   }
   rows.push(row);
   return rows;
+}
+
+function appendMetricCards(lines: string[], width: number, cards: MetricCard[]): void {
+  const columns = width >= 82 ? 3 : width >= 52 ? 2 : 1;
+  const gap = '  ';
+  const cardWidth = Math.max(1, Math.floor((width - terminalCellWidth(gap) * (columns - 1)) / columns));
+  const contentWidth = Math.max(0, cardWidth - 4);
+
+  for (let start = 0; start < cards.length; start += columns) {
+    const row = cards.slice(start, start + columns).map((card) => {
+      const color = card.color || c.cyanBright;
+      return [
+        c.slateBorder(`╭${'─'.repeat(Math.max(0, cardWidth - 2))}╮`),
+        `${c.slateBorder('│')} ${fitTerminalLine(c.slateMuted(card.label), contentWidth)} ${c.slateBorder('│')}`,
+        `${c.slateBorder('│')} ${fitTerminalLine(color(card.value), contentWidth)} ${c.slateBorder('│')}`,
+        `${c.slateBorder('│')} ${fitTerminalLine(c.slateText(card.detail || ''), contentWidth)} ${c.slateBorder('│')}`,
+        c.slateBorder(`╰${'─'.repeat(Math.max(0, cardWidth - 2))}╯`),
+      ];
+    });
+
+    for (let line = 0; line < 5; line++) lines.push(row.map((card) => card[line]).join(gap));
+  }
 }
 
 function splitCommandLine(value: string): string[] {
@@ -932,7 +961,7 @@ export class MaosTui {
     const pad = fitTerminalLine;
     const fullLine = (value: string) => pad(value, W);
 
-    const title = `${c.slateMuted('●')} ${c.amber('●')} ${c.emerald('●')}  ${c.boldWhite('MAOS OASIS')} ${c.slateMuted('v0.4.0')}  ${c.slateBorder('│')} ${c.slateText('Sovereign Multi-Agent Swarm Kernel')}`;
+    const title = `${c.cyanBright('◈')}  ${c.boldWhite('MAOS')} ${c.cyanBright('OASIS')} ${c.slateMuted('v0.4.0')}  ${c.slateBorder('│')} ${c.slateText('Sovereign Multi-Agent Swarm Kernel')}`;
     const vramGb = (this.gpuStats.vramUsedMiB / 1024).toFixed(1);
     const totalGb = (this.gpuStats.vramTotalMiB / 1024).toFixed(1);
     const modelBadge = this.selectedModel.replace('gemma2:', 'GEMMA ').toUpperCase() + ' · LOCAL';
@@ -957,7 +986,7 @@ export class MaosTui {
     if (this.modalMode !== 'none' && !commandInDashboard) this.renderModal(page, mainW);
 
     const bodyRows = Math.max(page.length, availableBodyRows);
-    const pageOffset = this.activeTab === 1 ? Math.max(0, Math.floor((bodyRows - page.length) / 2)) : 0;
+    const pageOffset = Math.max(0, Math.floor((bodyRows - page.length) / 2));
     const pageAt = (row: number) => (row >= pageOffset && row < pageOffset + page.length ? page[row - pageOffset] : '');
 
     if (railW) {
@@ -1119,348 +1148,191 @@ export class MaosTui {
 
   // ── Tab 2: HERDR Workspace & Gemma Local Inference ─────────────
   private renderTabGemma(lines: string[], W: number): void {
-    const colW = Math.max(0, Math.floor((W - 7) / 2));
-    const padCol = (left: string, _leftLen: number, right: string, _rightLen: number): string =>
-      c.slateBorder('│ ') +
-      fitTerminalLine(left, colW) +
-      c.slateBorder(' │ ') +
-      fitTerminalLine(right, colW) +
-      c.slateBorder(' │');
+    const center = (value: string) => centerTerminalLine(value, W);
+    lines.push(center(c.boldWhite('AGENTS')));
+    lines.push(center(c.slateText('Live Herdr workspace and local Gemma inference')));
+    lines.push('');
+    appendMetricCards(lines, W, [
+      {
+        label: 'HERDR AGENTS',
+        value: String(this.herdrAgents.length),
+        detail: `${this.herdrPanes.length} active panes`,
+        color: c.cyanBright,
+      },
+      {
+        label: 'HERDR CONNECTION',
+        value: this.herdrAvailable ? 'LIVE' : 'OFFLINE',
+        detail: 'Local IPC workspace',
+        color: this.herdrAvailable ? c.emerald : c.amber,
+      },
+      {
+        label: 'ACTIVE MODEL',
+        value: this.selectedModel,
+        detail: 'Press G to switch 2B / 9B',
+        color: c.violetBright,
+      },
+    ]);
 
-    lines.push(
-      padCol(c.boldWhite('HERDR + GEMMA MODEL CONFIGURATION'), 34, c.boldWhite('⚡ INFERENCE BENCHMARK TELEMETRY'), 32),
-    );
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(
-      padCol(
-        `${c.amber('Selected Model:')}   ${c.boldWhite(this.selectedModel)} ${c.cyan('[READY]')}`,
-        35,
-        `${c.cyan('Prompt Eval:')}      ${c.boldWhite('299.3 ms')} ${c.slateMuted('(240 tokens)')}`,
-        38,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.amber('Inference Host:')}   ${c.white('127.0.0.1:11434 (Loopback)')}`,
-        37,
-        `${c.cyan('Code Eval Speed:')}   ${c.boldWhite('25.6 tokens/sec')} ${c.slateMuted('(9B CUDA)')}`,
-        42,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.amber('Context Window:')}   ${c.white('4,096 tokens (llamacpp)')}`,
-        36,
-        `${c.cyan('2B Model Speed:')}   ${c.boldWhite('71.4 tokens/sec')} ${c.slateMuted('(Peak GPU)')}`,
-        42,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.amber('Quantization:')}     ${c.white('Q4_K_M (Sovereign Weights)')}`,
-        37,
-        `${c.cyan('Total Output:')}      ${c.boldWhite('1,207 tokens today')}`,
-        34,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.amber('Model Switching:')}  ${c.violetBright('Press [G] to toggle 2B ↔ 9B')}`,
-        38,
-        `${c.cyan('Accuracy Rate:')}     ${c.emerald('100% (0 compiler errors)')}`,
-        38,
-      ),
-    );
-
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(
-      padCol(
-        c.boldWhite('💡 GEMMA CODE GENERATION CAPABILITIES'),
-        38,
-        c.boldWhite('🛠 PROMPT PLAYGROUND QUICK TEST'),
-        32,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.emerald('✔')} ${c.white('Three.js Procedural Buffer Geometries')}`,
-        42,
-        `${c.white('Current Prompt:')} ${c.slateMuted('"Write ProceduralGenerators.ts"')}`,
-        46,
-      ),
-    );
-    lines.push(
-      padCol(
-        `${c.emerald('✔')} ${c.white('PBR Shader Properties & Glass Refraction')}`,
-        44,
-        `${c.white('Target Output:')}  ${c.cyan('apps/canva-3d/src/engine/')}`,
-        40,
-      ),
-    );
-    lines.push(
-      padCol(
-        `${c.emerald('✔')} ${c.white('GLTF Binary Serializers & Raycasting')}`,
-        39,
-        `${c.white('Hotpatch Hook:')}  ${c.emerald('Autonomous Healer Connected')}`,
-        44,
-      ),
-    );
-
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-    lines.push(padCol(c.boldWhite('HERDR PANE MATRIX'), 18, c.boldWhite('LOCAL SERVICE CONNECTIONS'), 28));
-    const localServices = [
-      `${c.emerald('●')} ${c.white('Vite Dev Server')} ${c.cyan(':5173')}`,
-      `${c.emerald('●')} ${c.white('Ollama')} ${c.cyan('127.0.0.1:11434')}`,
-      `${this.herdrAvailable ? c.emerald('●') : c.slateMuted('●')} ${c.white('Herdr IPC')} ${this.herdrAvailable ? c.emerald('connected') : c.slateMuted('offline')}`,
-      `${c.emerald('●')} ${c.white('Loopback')} ${c.cyan('only')}`,
-      `${c.emerald('●')} ${c.white('Cloud Egress')} ${c.emerald('0.00 KB')}`,
-      `${c.emerald('●')} ${c.white('OpSec Boundary')} ${c.emerald('STRICT')}`,
-    ];
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('HERDR WORKSPACE')}`);
     const panes = this.herdrPanes.slice(0, 6);
-    for (let i = 0; i < Math.max(panes.length, localServices.length); i++) {
-      const pane = panes[i];
-      const agent = pane ? this.herdrAgents.find((item) => item.pane_id === pane.pane_id) : undefined;
-      const state = pane?.agent_status || (pane?.focused ? 'focused' : 'idle');
-      const stateColor =
-        state === 'working'
-          ? c.cyanBright
-          : state === 'blocked'
-            ? c.amber
-            : state === 'done'
-              ? c.emerald
-              : c.slateMuted;
-      const paneLabel = pane
-        ? `${c.cyanBright('●')} ${c.cyan(pane.pane_id)} ${c.white(agent?.agent || pane.terminal_title_stripped || pane.terminal_id || 'Pane')} ${stateColor(state)}`
-        : i === 0
-          ? `${c.slateMuted('●')} ${c.white(this.herdrAvailable ? 'No active Herdr panes' : 'Herdr is offline')}`
-          : '';
-      lines.push(padCol(paneLabel, 0, localServices[i] || '', 0));
+    if (panes.length === 0) {
+      lines.push(
+        `  ${this.herdrAvailable ? c.slateMuted('No active panes yet.') : c.slateMuted('Herdr is offline. Refresh to check the local connection.')}`,
+      );
+    } else {
+      for (const pane of panes) {
+        const agent = this.herdrAgents.find((item) => item.pane_id === pane.pane_id);
+        const state = pane.agent_status || (pane.focused ? 'focused' : 'idle');
+        const stateColor =
+          state === 'working'
+            ? c.cyanBright
+            : state === 'blocked'
+              ? c.amber
+              : state === 'done'
+                ? c.emerald
+                : c.slateMuted;
+        const name = agent?.agent || pane.terminal_title_stripped || pane.terminal_id || 'Pane';
+        lines.push(`  ${c.cyanBright('●')} ${c.cyan(pane.pane_id)}  ${c.white(name)}  ${stateColor(state)}`);
+      }
     }
+
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('LOCAL INFERENCE')}`);
+    lines.push(
+      `  ${c.white('Host')}  ${c.cyan('127.0.0.1:11434')}  ${c.slateMuted('·')}  ${c.white('Context')}  ${c.cyan('4,096 tokens')}  ${c.slateMuted('·')}  ${c.white('Q4_K_M')}`,
+    );
+    lines.push(
+      `  ${c.white('Prompt eval')}  ${c.cyan('299.3 ms')}  ${c.slateMuted('·')}  ${c.white('Throughput')}  ${c.cyan('25.6 tok/s (9B)')}  ${c.slateMuted('/')}  ${c.cyanBright('71.4 tok/s (2B)')}`,
+    );
+    lines.push(
+      `  ${c.white('Output today')}  ${c.cyan('1,207 tokens')}  ${c.slateMuted('·')}  ${c.white('Accuracy')}  ${c.emerald('100% · 0 compiler errors')}`,
+    );
+    lines.push(
+      `  ${c.white('Generation')}  ${c.slateText('Three.js buffers · PBR shaders · GLTF serialization · raycasting')}`,
+    );
+    lines.push(
+      `  ${c.white('Target')}  ${c.cyan('apps/canva-3d/src/engine/')}  ${c.slateMuted('·')}  ${c.white('Healer hotpatch')}  ${c.emerald('connected')}`,
+    );
+    lines.push(
+      `  ${c.white('Services')}  ${c.emerald('Vite :5173 · Ollama local')}  ${c.slateMuted('·')}  ${c.white('Herdr IPC')}  ${this.herdrAvailable ? c.emerald('live') : c.slateMuted('offline')}`,
+    );
+    lines.push(`  ${c.white('Network')}  ${c.emerald('Loopback only · cloud egress 0.00 KB · STRICT')}`);
   }
 
   // ── Tab 3: Autonomous Healer ───────────────────────────────────
   private renderTabHealer(lines: string[], W: number): void {
-    const colW = Math.max(0, Math.floor((W - 7) / 2));
-    const padCol = (left: string, _leftLen: number, right: string, _rightLen: number): string =>
-      c.slateBorder('│ ') +
-      fitTerminalLine(left, colW) +
-      c.slateBorder(' │ ') +
-      fitTerminalLine(right, colW) +
-      c.slateBorder(' │');
+    const center = (value: string) => centerTerminalLine(value, W);
+    const vramPercent = this.gpuStats.vramTotalMiB
+      ? Math.round((this.gpuStats.vramUsedMiB / this.gpuStats.vramTotalMiB) * 100)
+      : 0;
+    lines.push(center(c.boldWhite('TELEMETRY')));
+    lines.push(center(c.slateText('GPU health, model throughput, and autonomous repair activity')));
+    lines.push('');
+    appendMetricCards(lines, W, [
+      {
+        label: 'GPU MEMORY',
+        value: `${(this.gpuStats.vramUsedMiB / 1024).toFixed(1)} / ${(this.gpuStats.vramTotalMiB / 1024).toFixed(1)} GB`,
+        detail: `${vramPercent}% allocated`,
+        color: c.violetBright,
+      },
+      {
+        label: 'GPU HEALTH',
+        value: `${this.gpuStats.tempC}°C · ${this.gpuStats.gpuUtil}%`,
+        detail: `${this.gpuStats.powerW}W draw · 75W limit`,
+        color: c.emerald,
+      },
+      {
+        label: 'INFERENCE SPEED',
+        value: '25.6 tok/s · 9B',
+        detail: '71.4 tok/s · 2B',
+        color: c.cyanBright,
+      },
+    ]);
 
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('AUTONOMOUS HEALER')}`);
     lines.push(
-      padCol(c.boldWhite('GPU & AUTONOMOUS HEALER TELEMETRY'), 34, c.boldWhite('🩺 SELF-HEALING REPAIR TELEMETRY'), 33),
-    );
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(
-      padCol(
-        `${c.amber('VRAM Allocation:')} ${c.violetBright(`${Math.round(this.gpuStats.vramUsedMiB)} / ${Math.round(this.gpuStats.vramTotalMiB)} MiB (${Math.round((this.gpuStats.vramUsedMiB / this.gpuStats.vramTotalMiB) * 100)}%)`)}`,
-        44,
-        `${c.emerald('●')} ${c.white('Watcher:')} ${c.emerald('ACTIVE (Herdr buffer hook)')}`,
-        39,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.amber('Core Temp:')} ${c.white(`${this.gpuStats.tempC}°C`)}   ${c.amber('Power:')} ${c.white(`${this.gpuStats.powerW}W / 75W`)}`,
-        39,
-        `${c.amber('Incidents Caught:')} ${c.boldWhite('1 Compile Warning')}`,
-        34,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.cyan('Speed:')} ${c.emerald('25.6 tok/s (9B)')} · ${c.cyanBright('71.4 tok/s (2B)')}`,
-        44,
-        `${c.amber('Hotpatches Applied:')} ${c.boldWhite('1 Hotpatch Injected')}`,
-        36,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Model Reasoning:')}    ${c.violetBright('Gemma 2 9B (Targeted Repair)')}`,
-        43,
-        `${c.amber('Resolution Rate:')}   ${c.emerald('100% Success')}`,
-        30,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Stack Trace Engine:')} ${c.cyan('TypeScript / Vite / Node')}`,
-        40,
-        `${c.amber('Max Retry Loop:')} ${c.white('3 Attempts / Fault Barrier')}`,
-        37,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Repair Queue:')} ${c.cyan('Herdr pane buffer watcher')}`,
-        36,
-        `${c.amber('Avg Repair Time:')}   ${c.boldWhite('3.82 seconds')}`,
-        31,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Cloud Egress:')} ${c.emerald('0.00 KB (Loopback)')}`,
-        34,
-        `${c.amber('OpSec Boundary:')} ${c.emerald('STRICT')}`,
-        28,
-      ),
-    );
-
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(padCol(c.boldWhite('📜 HEALER INCIDENT LOGS'), 24, c.boldWhite('🔍 VERIFICATION PROOF'), 22));
-
-    lines.push(
-      padCol(
-        `${c.slateMuted('[21:35]')} ${c.emerald('[HEALED]')} Buffer geometry index types unified`,
-        50,
-        `${c.emerald('✔')} ${c.white('Uint16BufferAttribute normalized')}`,
-        37,
-      ),
+      `  ${c.white('Watcher')}  ${c.emerald('ACTIVE')}  ${c.slateMuted('·')}  ${c.white('Source')}  ${c.cyan('Herdr pane buffer hook')}`,
     );
     lines.push(
-      padCol(
-        `${c.slateMuted('[21:17]')} ${c.emerald('[PASS]')} Node test runner passed in 2.4ms`,
-        45,
-        `${c.emerald('✔')} ${c.white('Euler degree rotation math verified')}`,
-        40,
-      ),
+      `  ${c.white('Repair engine')}  ${c.violetBright('Gemma 2 9B')}  ${c.slateMuted('·')}  ${c.white('Stack traces')}  ${c.cyan('TypeScript / Vite / Node')}`,
     );
     lines.push(
-      padCol(
-        `${c.slateMuted('[21:16]')} ${c.emerald('[PASS]')} Raycast ground plane math verified`,
-        46,
-        `${c.emerald('✔')} ${c.white('Zero regression across 47 tests')}`,
-        37,
-      ),
+      `  ${c.white('Incidents')}  ${c.amber('1 compile warning')}  ${c.slateMuted('·')}  ${c.white('Hotpatches')}  ${c.emerald('1 applied')}  ${c.slateMuted('·')}  ${c.white('Resolution')}  ${c.emerald('100%')}`,
     );
+    lines.push(
+      `  ${c.white('Retry limit')}  ${c.cyan('3 attempts')}  ${c.slateMuted('·')}  ${c.white('Average repair')}  ${c.cyan('3.82 seconds')}`,
+    );
+    lines.push(`  ${c.white('Network boundary')}  ${c.emerald('Loopback only · 0.00 KB cloud egress · STRICT')}`);
+
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('RECENT REPAIRS & VERIFICATION')}`);
+    lines.push(
+      `  ${c.slateMuted('[21:35]')} ${c.emerald('HEALED')}  ${c.white('Buffer geometry index types unified')}`,
+    );
+    lines.push(`  ${c.slateMuted('[21:17]')} ${c.emerald('PASS')}  ${c.white('Node test runner passed in 2.4 ms')}`);
+    lines.push(`  ${c.slateMuted('[21:16]')} ${c.emerald('PASS')}  ${c.white('Raycast ground plane math verified')}`);
+    lines.push(`  ${c.emerald('✓')} ${c.slateText('Uint16 buffer attributes normalized · Euler rotation verified')}`);
+    lines.push(`  ${c.emerald('✓')} ${c.slateText('Zero regression across 47 tests')}`);
   }
 
   // ── Tab 4: Event Log & Canva 3D Studio ─────────────────────────
   private renderTabCanva3D(lines: string[], W: number): void {
-    const colW = Math.max(0, Math.floor((W - 7) / 2));
-    const padCol = (left: string, _leftLen: number, right: string, _rightLen: number): string =>
-      c.slateBorder('│ ') +
-      fitTerminalLine(left, colW) +
-      c.slateBorder(' │ ') +
-      fitTerminalLine(right, colW) +
-      c.slateBorder(' │');
+    const center = (value: string) => centerTerminalLine(value, W);
+    lines.push(center(c.boldWhite('EVENT LOG')));
+    lines.push(center(c.slateText('Session activity and MAOS Oasis 3D studio')));
+    lines.push('');
+    appendMetricCards(lines, W, [
+      {
+        label: 'SESSION EVENTS',
+        value: String(this.activities.length),
+        detail: this.activities.length ? 'Most recent activity below' : 'No activity recorded yet',
+        color: c.cyanBright,
+      },
+      {
+        label: '3D STUDIO',
+        value: 'localhost:5173',
+        detail: 'Vite development server',
+        color: c.emerald,
+      },
+      {
+        label: 'RENDERER',
+        value: 'Three.js · WebGL 2.0',
+        detail: '13 geometries · 8 material presets',
+        color: c.violetBright,
+      },
+    ]);
 
-    lines.push(padCol(c.boldWhite('RECENT EVENTS'), 16, c.boldWhite('CANVA 3D STUDIO STATUS'), 24));
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    const services = [
-      `${c.emerald('●')} ${c.white('Vite Dev Server')} ${c.cyan(':5173')}`,
-      `${c.emerald('●')} ${c.white('Ollama')} ${c.cyan('127.0.0.1:11434')}`,
-      `${c.emerald('●')} ${c.white('Herdr IPC')} ${c.cyan('herdr.sock · wA')}`,
-      `${c.emerald('●')} ${c.white('Studio')} ${c.cyan('localhost:5173')}`,
-    ];
-    for (const [index, event] of this.activities.slice(0, 4).entries()) {
-      lines.push(
-        padCol(
-          `${c.slateMuted(`[${event.time}]`)} ${event.color(`[${event.tag}]`)} ${c.white(event.text.slice(0, Math.max(8, colW - 18)))}`,
-          colW - 2,
-          services[index],
-          35,
-        ),
-      );
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('RECENT ACTIVITY')}`);
+    const events = this.activities.slice(0, 6);
+    if (events.length === 0) {
+      lines.push(`  ${c.slateMuted('Events from commands and autonomous tasks will appear here.')}`);
+    } else {
+      for (const event of events) {
+        lines.push(`  ${c.slateMuted(`[${event.time}]`)} ${event.color(`[${event.tag}]`)} ${c.white(event.text)}`);
+      }
     }
 
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
+    lines.push('');
+    lines.push(`${c.cyanBright('◆')} ${c.boldWhite('STUDIO')}`);
     lines.push(
-      padCol(c.boldWhite('🎨 CANVA 3D SPATIAL STUDIO STATUS'), 34, c.boldWhite('💎 GEMMA GENERATED 3D ELEMENTS'), 32),
-    );
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(
-      padCol(
-        `${c.emerald('●')} ${c.white('Dev Server:')}      ${c.cyan('http://localhost:5173')}`,
-        40,
-        `${c.pink('✦')} ${c.boldWhite('Gemma Star:')}  ${c.slateText('10-Point Extruded Poly')}`,
-        39,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.emerald('●')} ${c.white('HMR Pipeline:')}    ${c.emerald('Active (Vite 5.4)')}`,
-        34,
-        `${c.cyan('✦')} ${c.boldWhite('Gemma Helix:')} ${c.slateText('Coiled 3D Spring Buffer')}`,
-        40,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Graphics Pipeline:')} ${c.violetBright('Three.js WebGL 2.0')}`,
-        37,
-        `${c.amber('✦')} ${c.boldWhite('3D Primitives:')} ${c.white('13 Total Geometries')}`,
-        36,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('Lighting Presets:')}  ${c.white('5 Themes (Cyberpunk, Studio)')}`,
-        42,
-        `${c.violetBright('✦')} ${c.boldWhite('PBR Shaders:')}   ${c.white('8 Material Presets')}`,
-        36,
-      ),
-    );
-
-    lines.push(
-      padCol(
-        `${c.white('3D Export Engine:')}  ${c.emerald('Binary .GLB / GLTF + 4K PNG')}`,
-        41,
-        `${c.emerald('✦')} ${c.boldWhite('Drag & Drop:')}   ${c.white('Raycast Ground Plane')}`,
-        38,
-      ),
-    );
-
-    lines.push(c.slateBorder('├' + '─'.repeat(colW + 2) + '┼' + '─'.repeat(colW + 2) + '┤'));
-
-    lines.push(padCol(c.boldWhite('🕹 CONTROLS & SHORTCUTS'), 24, c.boldWhite('🚀 ONE-CLICK LAUNCHER'), 23));
-
-    lines.push(
-      padCol(
-        `${c.white('Orbit / Pan / Zoom:')} ${c.slateMuted('Left / Right Drag / Scroll')}`,
-        43,
-        `${c.boldWhite('Press [D]')} ${c.pink('to open studio in browser')}`,
-        37,
-      ),
+      `  ${c.white('Server')}  ${c.cyan('http://localhost:5173')}  ${c.slateMuted('·')}  ${c.white('HMR')}  ${c.emerald('Vite 5.4 active')}`,
     );
     lines.push(
-      padCol(
-        `${c.white('Transform Gizmos:')}   ${c.boldWhite('W')} ${c.slateMuted('(Move)')} ${c.boldWhite('E')} ${c.slateMuted('(Rotate)')} ${c.boldWhite('R')} ${c.slateMuted('(Scale)')}`,
-        46,
-        `${c.boldWhite('Press [T]')} ${c.emerald('to run 3D geometry tests')}`,
-        35,
-      ),
+      `  ${c.white('Graphics')}  ${c.violetBright('Three.js WebGL 2.0')}  ${c.slateMuted('·')}  ${c.white('Lighting')}  ${c.cyan('5 themes, including Cyberpunk and Studio')}`,
     );
     lines.push(
-      padCol(
-        `${c.white('Duplicate / Delete:')} ${c.boldWhite('Ctrl+D')} ${c.slateMuted('/')} ${c.boldWhite('Del')}`,
-        34,
-        `${c.boldWhite('Press [I]')} ${c.violetBright('to Ignite new autonomous task')}`,
-        40,
-      ),
+      `  ${c.white('Elements')}  ${c.pink('Gemma Star · Gemma Helix')}  ${c.slateMuted('·')}  ${c.white('Exports')}  ${c.emerald('.GLB / GLTF / 4K PNG')}`,
+    );
+    lines.push(`  ${c.white('Shapes')}  ${c.slateText('10-point extruded star · coiled spring buffer')}`);
+    lines.push(`  ${c.white('Interaction')}  ${c.slateText('Raycast drag and drop · orbit, pan, zoom')}`);
+    lines.push(
+      `  ${c.white('Transforms')}  ${c.boldWhite('W')} ${c.slateText('move')}  ${c.boldWhite('E')} ${c.slateText('rotate')}  ${c.boldWhite('R')} ${c.slateText('scale')}  ${c.slateMuted('·')}  ${c.boldWhite('Ctrl+D')} ${c.slateText('duplicate')}  ${c.boldWhite('Del')} ${c.slateText('delete')}`,
+    );
+    lines.push(
+      `  ${c.white('Shortcuts')}  ${c.boldWhite('D')} ${c.slateText('open studio')}  ${c.slateMuted('·')}  ${c.boldWhite('T')} ${c.slateText('geometry tests')}  ${c.slateMuted('·')}  ${c.boldWhite('I')} ${c.slateText('autonomous task')}`,
     );
   }
 
