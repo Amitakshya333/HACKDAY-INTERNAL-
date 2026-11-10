@@ -276,7 +276,7 @@ export class MaosTui {
   private isRunning: boolean = true;
   private externalCommandRunning: boolean = false;
   private selectedModel: string = 'gemma2:9b';
-  private modalMode: 'none' | 'ignite' | 'promptTest' | 'command' = 'none';
+  private modalMode: 'none' | 'ignite' | 'promptTest' | 'command' = 'command';
   private modalInputText: string = '';
   private statusMessage: string = 'Ready. Press Enter to type a goal or slash command; /help lists commands.';
   private commandHistory: string[] = [];
@@ -353,64 +353,16 @@ export class MaosTui {
     process.stdin.on('keypress', (str, key) => {
       if (!key || this.externalCommandRunning) return;
 
-      // Handle Ctrl+C or 'q' to quit
-      if ((key.ctrl && key.name === 'c') || (key.name === 'q' && this.modalMode === 'none')) {
+      // Handle Ctrl+C to always quit
+      if (key.ctrl && key.name === 'c') {
         this.exit();
         return;
       }
 
-      if (this.modalMode === 'command') {
+      // If in modal dialog mode (ignite/promptTest modal overlays):
+      if (this.modalMode !== 'none' && this.modalMode !== 'command') {
         if (key.name === 'escape') {
-          this.modalMode = 'none';
-          this.modalInputText = '';
-          this.commandHistoryIndex = this.commandHistory.length;
-          this.statusMessage = 'Command cancelled.';
-          this.render();
-          return;
-        }
-        if (key.name === 'return') {
-          const command = this.modalInputText.trim();
-          this.modalMode = 'none';
-          this.modalInputText = '';
-          this.commandHistoryIndex = this.commandHistory.length;
-          if (command) {
-            this.commandHistory.push(command);
-            this.commandHistory = this.commandHistory.slice(-50);
-          }
-          void this.executeCommandLine(command);
-          return;
-        }
-        if (key.name === 'backspace') {
-          const characters = Array.from(GRAPHEME_SEGMENTER.segment(this.modalInputText), ({ segment }) => segment);
-          characters.pop();
-          this.modalInputText = characters.join('');
-          this.render();
-          return;
-        }
-        if (key.name === 'up' && this.commandHistory.length > 0) {
-          this.commandHistoryIndex = Math.max(0, this.commandHistoryIndex - 1);
-          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
-          this.render();
-          return;
-        }
-        if (key.name === 'down' && this.commandHistory.length > 0) {
-          this.commandHistoryIndex = Math.min(this.commandHistory.length, this.commandHistoryIndex + 1);
-          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
-          this.render();
-          return;
-        }
-        if (str && !key.ctrl && !key.meta) {
-          this.modalInputText += str;
-          this.commandHistoryIndex = this.commandHistory.length;
-          this.render();
-        }
-        return;
-      }
-
-      // If in modal mode:
-      if (this.modalMode !== 'none') {
-        if (key.name === 'escape') {
-          this.modalMode = 'none';
+          this.modalMode = 'command';
           this.modalInputText = '';
           this.statusMessage = 'Action cancelled.';
           this.render();
@@ -435,19 +387,84 @@ export class MaosTui {
         return;
       }
 
-      // Open the command line from Enter on any page or by typing '/' directly.
-      if (key.name === 'return' || key.name === 'slash' || str === '/') {
-        this.modalMode = 'command';
-        this.modalInputText = str === '/' ? '/' : '';
-        this.commandHistoryIndex = this.commandHistory.length;
-        this.statusMessage = 'Type a goal or /help for MAOS commands.';
-        this.render();
-        return;
+      // If in command mode or on Tab 1 (where the prompt box is always ready to receive input):
+      if (this.modalMode === 'command' || this.activeTab === 1) {
+        if (key.name === 'tab') {
+          this.activeTab = this.activeTab >= 4 ? 1 : this.activeTab + 1;
+          this.statusMessage = `Switched to View [${this.activeTab}].`;
+          this.modalMode = this.activeTab === 1 ? 'command' : 'none';
+          this.render();
+          return;
+        }
+        if (key.name === 'escape') {
+          this.modalInputText = '';
+          this.commandHistoryIndex = this.commandHistory.length;
+          this.statusMessage = 'Input cleared.';
+          this.render();
+          return;
+        }
+        if (key.name === 'return') {
+          const command = this.modalInputText.trim();
+          this.modalInputText = '';
+          this.commandHistoryIndex = this.commandHistory.length;
+          if (command) {
+            this.commandHistory.push(command);
+            this.commandHistory = this.commandHistory.slice(-50);
+            this.modalMode = 'command';
+            void this.executeCommandLine(command);
+          } else {
+            this.statusMessage = 'Type a goal or /help to run commands.';
+            this.render();
+          }
+          return;
+        }
+        if (key.name === 'backspace') {
+          const characters = Array.from(GRAPHEME_SEGMENTER.segment(this.modalInputText), ({ segment }) => segment);
+          characters.pop();
+          this.modalInputText = characters.join('');
+          this.render();
+          return;
+        }
+        if (key.name === 'up' && this.commandHistory.length > 0) {
+          this.commandHistoryIndex = Math.max(0, this.commandHistoryIndex - 1);
+          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
+          this.render();
+          return;
+        }
+        if (key.name === 'down' && this.commandHistory.length > 0) {
+          this.commandHistoryIndex = Math.min(this.commandHistory.length, this.commandHistoryIndex + 1);
+          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
+          this.render();
+          return;
+        }
+
+        // When input text is empty on Tab 1, allow quick hotkeys:
+        if (this.modalInputText === '') {
+          if (key.name === 'q') {
+            this.exit();
+            return;
+          }
+        }
+
+        // Capture ANY typed character directly into the input box:
+        if (str && !key.ctrl && !key.meta) {
+          this.modalMode = 'command';
+          this.modalInputText += str;
+          this.commandHistoryIndex = this.commandHistory.length;
+          this.render();
+          return;
+        }
       }
 
+      // Action hotkeys on other tabs or when unfocused:
+      if (key.name === 'q') {
+        this.exit();
+        return;
+      }
       if (key.name === 'tab') {
         this.activeTab = this.activeTab >= 4 ? 1 : this.activeTab + 1;
         this.statusMessage = `Switched to View [${this.activeTab}].`;
+        this.modalMode = this.activeTab === 1 ? 'command' : 'none';
         this.render();
         return;
       }
@@ -1101,7 +1118,9 @@ export class MaosTui {
       const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix) - 1);
       const commandText =
         this.modalMode === 'command'
-          ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
+          ? this.modalInputText
+            ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
+            : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`
           : c.slateMuted('Type a goal or /help for commands');
       const promptRow = `${c.cyanBright('│ ')}${prefix}${commandText}${c.cyanBright(' │')}`;
       lines.push(centerTerminalLine(c.cyanBright('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'), W));
@@ -1136,7 +1155,9 @@ export class MaosTui {
     lines.push('');
     const commandPrompt =
       this.modalMode === 'command'
-        ? `${c.white(fitTerminalTail(this.modalInputText, Math.max(0, promptW - 15)))}${c.boldWhite('█')}`
+        ? this.modalInputText
+          ? `${c.white(fitTerminalTail(this.modalInputText, Math.max(0, promptW - 15)))}${c.boldWhite('█')}`
+          : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`
         : c.slateMuted('Type a goal or /help for commands');
     const promptContent = `${c.cyanBright('>')} ${c.slateBorder('│')}  ${commandPrompt}`;
     if (promptW >= 24) {
