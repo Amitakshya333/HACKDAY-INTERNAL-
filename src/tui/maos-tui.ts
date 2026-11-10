@@ -130,8 +130,8 @@ function fitTerminalLine(value: string, width: number): string {
       output += '…';
       used += 1;
     }
-    if (value.includes('\u001b')) output += '\u001b[0m';
   }
+  if (value.includes('\u001b')) output += '\u001b[0m';
   return output + ' '.repeat(Math.max(0, width - used));
 }
 
@@ -953,7 +953,7 @@ export class MaosTui {
   // ── Render Engine ──────────────────────────────────────────────
 
   private render(): void {
-    const W = Math.max(1, process.stdout.columns || 120);
+    const W = Math.max(20, (process.stdout.columns || 120) - 1);
     const railW = W >= Math.max(113, MAOS_OASIS_LOGO_WIDTH + 27) ? 24 : 0;
     const mainW = W - railW - (railW ? 3 : 0);
     const lines: string[] = [];
@@ -974,7 +974,7 @@ export class MaosTui {
     const hasTranscriptSession = this.activeTab === 1 && this.transcript.length > 0;
     const hasStatus = !hasTranscriptSession && !this.statusMessage.startsWith('Ready.');
     const footerRows = hasStatus ? 4 : 2;
-    const terminalRows = process.stdout.rows || 40;
+    const terminalRows = Math.max(10, (process.stdout.rows || 40) - 1);
     const availableBodyRows = Math.max(1, terminalRows - lines.length - footerRows);
 
     const page: string[] = [];
@@ -985,9 +985,12 @@ export class MaosTui {
     const commandInDashboard = this.modalMode === 'command' && this.activeTab === 1;
     if (this.modalMode !== 'none' && !commandInDashboard) this.renderModal(page, mainW);
 
-    const bodyRows = Math.max(page.length, availableBodyRows);
-    const pageOffset = Math.max(0, Math.floor((bodyRows - page.length) / 2));
-    const pageAt = (row: number) => (row >= pageOffset && row < pageOffset + page.length ? page[row - pageOffset] : '');
+    const bodyRows = availableBodyRows;
+    const pageOffset = page.length < bodyRows ? Math.max(0, Math.floor((bodyRows - page.length) / 2)) : 0;
+    const pageAt = (row: number) => {
+      const idx = row - pageOffset;
+      return idx >= 0 && idx < page.length ? page[idx] : '';
+    };
 
     if (railW) {
       const sidebar = Array.from({ length: bodyRows }, () => '');
@@ -1062,8 +1065,9 @@ export class MaosTui {
     ).join('   ');
     lines.push(fullLine(hotkeys));
 
-    // Rewrite from the cursor home and clear any rows left by a longer previous view.
-    process.stdout.write('\x1b[H' + lines.join('\n') + '\x1b[J');
+    // Rewrite from the cursor home and strictly clamp rows to viewport height
+    const rendered = lines.slice(0, terminalRows).join('\n');
+    process.stdout.write('\x1b[H' + rendered + '\x1b[J');
   }
 
   // ── Tab 1: MAOS Oasis welcome screen ───────────────────────────

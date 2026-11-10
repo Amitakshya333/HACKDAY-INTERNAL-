@@ -378,7 +378,7 @@ export async function checkModelAndBenchmark(
   const modelMatches = (candidate: string, target: string): boolean => {
     const c = candidate.toLowerCase();
     const t = target.toLowerCase();
-    return c === t || c === `${t}:latest` || c.replace(/:latest$/, '') === t;
+    return c === t || c === `${t}:latest` || c.replace(/:latest$/, '') === t.replace(/:latest$/, '');
   };
 
   const isPresent = pulledModels.some((name) => modelMatches(name, targetModel));
