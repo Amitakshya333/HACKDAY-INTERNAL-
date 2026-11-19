@@ -14,6 +14,7 @@
 import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as http from 'http';
 import { execFile, execSync, spawn, type ChildProcess } from 'child_process';
 import chalk from 'chalk';
 import { AgentInfo, getDefaultHerdrHarness, PaneInfo } from '../integrations/herdr';
@@ -101,16 +102,15 @@ function terminalCellWidth(value: string): number {
         (point >= 0xffe0 && point <= 0xffe6) ||
         (point >= 0x1f300 && point <= 0x1faff) ||
         (point >= 0x20000 && point <= 0x3fffd));
+    const hasVS16 = points.includes(0xfe0f);
     const emojiPresentation =
-      points.includes(0xfe0f) ||
+      (hasVS16 && point !== 0x2713 && point !== 0x2714) ||
       points.includes(0x20e3) ||
       points.filter((value) => value >= 0x1f1e6 && value <= 0x1f1ff).length === 2 ||
-      points.some(
-        (value) =>
-          (value >= 0x1f000 && value <= 0x1faff) ||
-          (value >= 0x2700 && value <= 0x27bf) || // Dingbats (❌ 0x274c, ✅ 0x2705, ❎ 0x274e, etc.)
-          (value >= 0x2600 && value <= 0x26ff && [0x26a0, 0x26a1, 0x26d4, 0x267f, 0x2699].includes(value)),
-      );
+      (point >= 0x1f300 && point <= 0x1faff) ||
+      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(point) ||
+      (hasVS16 && [0x26a0, 0x2699, 0x26d4, 0x26a1, 0x267f].includes(point)) ||
+      (!hasVS16 && [0x26a1, 0x26d4, 0x267f].includes(point));
     width += wide || emojiPresentation ? 2 : 1;
   }
   return width;
@@ -484,6 +484,10 @@ export class MaosTui {
   private chatIsStreaming: boolean = false;
   private activeChatAbortController: AbortController | null = null;
   private oasisConfig: any = null;
+  private prefixActive: boolean = false;
+  private prefixTimeout: NodeJS.Timeout | null = null;
+  private previewServer: http.Server | null = null;
+  private previewPort: number = 3030;
 
   private settingsScrollOffset: number = 0;
   private settingsViewportRows: number = 16;
@@ -703,8 +707,8 @@ export class MaosTui {
   }
 
   public start(): void {
-    // Switch to alternate screen buffer, clear screen & hide cursor
-    process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l');
+    // Switch to alternate screen buffer, clear screen, hide cursor & enable mouse reporting
+    process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000h\x1b[?1002h\x1b[?1006h');
 
     this.setupKeyboard();
     this.updateGpuTelemetry();
@@ -757,8 +761,18 @@ export class MaosTui {
         process.stdin.setRawMode(false);
       }
     } catch {}
-    // Restore normal screen buffer and reveal cursor
-    process.stdout.write('\x1b[?1049l\x1b[?25h');
+    if (this.prefixTimeout) {
+      clearTimeout(this.prefixTimeout);
+      this.prefixTimeout = null;
+    }
+    if (this.previewServer) {
+      try {
+        this.previewServer.close();
+      } catch {}
+      this.previewServer = null;
+    }
+    // Restore normal screen buffer, disable mouse reporting, reveal cursor
+    process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?1049l\x1b[?25h');
     console.log(c.cyanBright('✦ MAOS Oasis TUI closed. Returning to terminal.'));
     process.exit(0);
   }
@@ -799,6 +813,120 @@ export class MaosTui {
       // Handle Ctrl+C to cancel current process or quit cleanly
       if ((key.ctrl && key.name === 'c') || str === '\x03') {
         this.interruptHandler();
+        return;
+      }
+
+      // Mouse Wheel Vertical Scrolling (supported across modern terminal emulators)
+      if (str && (str.includes('<64;') || str.includes('\x1b[<64;'))) {
+        this.scrollUpCurrentView(3);
+        return;
+      }
+      if (str && (str.includes('<65;') || str.includes('\x1b[<65;'))) {
+        this.scrollDownCurrentView(3);
+        return;
+      }
+
+      // Global Direct Ctrl Shortcuts (Work universally from any view, including chat/input)
+      if (key.ctrl && key.name === 'p') {
+        this.previewArtifacts();
+        return;
+      }
+      if (key.ctrl && key.name === 'g') {
+        this.cycleModel();
+        return;
+      }
+      if (key.ctrl && key.name === 'r') {
+        void this.updateHerdrTelemetry();
+        void this.refreshDetectedModels();
+        this.statusMessage = 'Swarm roster and telemetry refreshed.';
+        this.render();
+        return;
+      }
+
+      // Prefix Key Toggle (Ctrl+B standard matching tmux, cmux, and herdr)
+      if (key.ctrl && (key.name === 'b' || str === '\x02')) {
+        this.prefixActive = !this.prefixActive;
+        if (this.prefixTimeout) {
+          clearTimeout(this.prefixTimeout);
+          this.prefixTimeout = null;
+        }
+        if (this.prefixActive) {
+          this.prefixTimeout = setTimeout(() => {
+            this.prefixActive = false;
+            this.prefixTimeout = null;
+            this.render();
+          }, 4000);
+          this.statusMessage = 'PREFIX MODE ACTIVE: [P] Preview · [G] Model · [R] Refresh · [I] Ignite · [0-5] Tab · [Esc] Cancel';
+        } else {
+          this.statusMessage = 'Prefix mode deactivated.';
+        }
+        this.render();
+        return;
+      }
+
+      // Prefix Command Dispatcher: if prefix is active, execute next key as a cockpit command
+      if (this.prefixActive) {
+        this.prefixActive = false;
+        if (this.prefixTimeout) {
+          clearTimeout(this.prefixTimeout);
+          this.prefixTimeout = null;
+        }
+        if (key.name === 'escape') {
+          this.statusMessage = 'Prefix command cancelled.';
+          this.render();
+          return;
+        }
+        if (key.name === 'p' || key.name === 'o') {
+          this.previewArtifacts();
+          return;
+        }
+        if (key.name === 'g') {
+          this.cycleModel();
+          return;
+        }
+        if (key.name === 'r') {
+          void this.updateHerdrTelemetry();
+          void this.refreshDetectedModels();
+          this.statusMessage = 'Swarm roster and telemetry refreshed.';
+          this.render();
+          return;
+        }
+        if (key.name === 'i') {
+          this.modalMode = 'ignite';
+          this.modalInputText = 'Build and deploy Canva 3D Spatial Studio';
+          this.render();
+          return;
+        }
+        if (['0', '1', '2', '3', '4', '5'].includes(key.name) || ['0', '1', '2', '3', '4', '5'].includes(str)) {
+          const target = parseInt(key.name || str, 10);
+          this.activeTab = target;
+          this.statusMessage = `Switched to View [${this.activeTab}].`;
+          this.render();
+          return;
+        }
+        if (key.name === 'c') {
+          this.activeTab = 2;
+          this.statusMessage = 'Switched to View [2] — Local Chat.';
+          this.render();
+          return;
+        }
+        if (key.name === 's') {
+          this.loadWorkplaceConfig();
+          this.activeTab = 0;
+          this.statusMessage = 'Switched to View [0] — Settings.';
+          this.render();
+          return;
+        }
+        if (key.name === 'pageup' || key.name === 'up' || key.name === 'k') {
+          this.scrollUpCurrentView();
+          return;
+        }
+        if (key.name === 'pagedown' || key.name === 'down' || key.name === 'j') {
+          this.scrollDownCurrentView();
+          return;
+        }
+        this.statusMessage = `Prefix ignored for key '${key.name || str}'.`;
+        this.render();
         return;
       }
 
@@ -953,7 +1081,15 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (['pageup', 'pagedown', 'home', 'end'].includes(key.name) && this.transcript.length > 0) {
+        if (['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) && this.transcript.length > 0) {
+          if (key.ctrl && key.name === 'up') {
+            this.scrollUpCurrentView(3);
+            return;
+          }
+          if (key.ctrl && key.name === 'down') {
+            this.scrollDownCurrentView(3);
+            return;
+          }
           if (key.name === 'home') {
             this.transcriptScrollOffset = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
           } else if (key.name === 'end') {
@@ -1027,7 +1163,15 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (['pageup', 'pagedown', 'home', 'end'].includes(key.name) && this.chatMessages.length > 0) {
+        if (['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) && this.chatMessages.length > 0) {
+          if (key.ctrl && key.name === 'up') {
+            this.scrollUpCurrentView(3);
+            return;
+          }
+          if (key.ctrl && key.name === 'down') {
+            this.scrollDownCurrentView(3);
+            return;
+          }
           if (key.name === 'home') {
             this.chatScrollOffset = Math.max(0, this.chatRenderedRowCount - this.chatViewportRows);
           } else if (key.name === 'end') {
@@ -1191,17 +1335,7 @@ export class MaosTui {
       }
 
       if (key.name === 'g') {
-        if (this.detectedModels.length === 0) {
-          this.selectedModel = this.selectedModel === 'gemma2:9b' ? 'gemma2:2b' : 'gemma2:9b';
-        } else {
-          const currIdx = this.detectedModels.findIndex((m) => m.id.toLowerCase() === this.selectedModel.toLowerCase());
-          const nextIdx = (currIdx + 1) % this.detectedModels.length;
-          const nextModel = this.detectedModels[nextIdx];
-          this.selectedModel = nextModel.id;
-        }
-        this.statusMessage = `Active model switched to ${this.selectedModel}.`;
-        if (this.activeTab === 1 && this.transcript.length > 0) this.appendTranscript(this.statusMessage);
-        this.render();
+        this.cycleModel();
         return;
       }
 
@@ -1989,6 +2123,165 @@ export class MaosTui {
     this.runExternalProcess(command, args, cwd, 'Running Canva 3D tests');
   }
 
+  private ensurePreviewServer(): number {
+    if (this.previewServer) return this.previewPort;
+    try {
+      const mimeTypes: Record<string, string> = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'application/javascript; charset=utf-8',
+        '.mjs': 'application/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+      };
+
+      const server = http.createServer((req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+
+        const rawUrl = req.url?.split('?')[0] || '/';
+        const decodedUrl = decodeURIComponent(rawUrl);
+        let relPath = decodedUrl.startsWith('/') ? decodedUrl.slice(1) : decodedUrl;
+        if (!relPath || relPath === '') relPath = 'output/index.html';
+
+        const candidates = [
+          path.resolve(this.projectRoot, relPath),
+          path.resolve(this.projectRoot, 'output', relPath),
+          path.resolve(this.projectRoot, 'dist-preview', relPath),
+          path.resolve(this.projectRoot, 'output', 'index.html'),
+          path.resolve(this.projectRoot, 'index.html'),
+        ];
+
+        let targetFile: string | null = null;
+        for (const cand of candidates) {
+          if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+            targetFile = cand;
+            break;
+          }
+        }
+
+        if (!targetFile) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('404 Not Found');
+          return;
+        }
+
+        const ext = path.extname(targetFile).toLowerCase();
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        try {
+          const content = fs.readFileSync(targetFile);
+          res.writeHead(200, { 'Content-Type': contentType });
+          res.end(content);
+        } catch {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('500 Internal Server Error');
+        }
+      });
+
+      server.on('error', () => {
+        // Fallback silently if port already bound
+      });
+
+      server.listen(this.previewPort, '127.0.0.1', () => {});
+      server.unref();
+      this.previewServer = server;
+      return this.previewPort;
+    } catch {
+      return 0;
+    }
+  }
+
+  public cycleModel(): void {
+    if (this.detectedModels.length === 0) {
+      this.selectedModel = this.selectedModel === 'gemma2:9b' ? 'gemma2:2b' : 'gemma2:9b';
+    } else {
+      const currIdx = this.detectedModels.findIndex((m) => m.id.toLowerCase() === this.selectedModel.toLowerCase());
+      const nextIdx = (currIdx + 1) % this.detectedModels.length;
+      const nextModel = this.detectedModels[nextIdx];
+      this.selectedModel = nextModel.id;
+    }
+    this.statusMessage = `Active model switched to ${this.selectedModel}.`;
+    if (this.activeTab === 1 && this.transcript.length > 0) this.appendTranscript(this.statusMessage);
+    this.render();
+  }
+
+  private scrollUpCurrentView(step?: number): void {
+    if (this.activeTab === 1 && this.transcriptRenderedRowCount > this.transcriptViewportRows) {
+      const delta = step || Math.max(1, this.transcriptViewportRows - 1);
+      const maxScroll = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
+      this.transcriptScrollOffset = Math.min(maxScroll, this.transcriptScrollOffset + delta);
+      this.render();
+    } else if (this.activeTab === 2 && this.chatRenderedRowCount > this.chatViewportRows) {
+      const delta = step || Math.max(1, this.chatViewportRows - 1);
+      const maxScroll = Math.max(0, this.chatRenderedRowCount - this.chatViewportRows);
+      this.chatScrollOffset = Math.min(maxScroll, this.chatScrollOffset + delta);
+      this.render();
+    } else if (this.activeTab === 0 && this.settingsRenderedRowCount > this.settingsViewportRows) {
+      const maxScroll = Math.max(0, this.settingsRenderedRowCount - this.settingsViewportRows);
+      this.settingsScrollOffset = Math.max(0, this.settingsScrollOffset - (step || 2));
+      this.render();
+    }
+  }
+
+  private scrollDownCurrentView(step?: number): void {
+    if (this.activeTab === 1 && this.transcriptRenderedRowCount > this.transcriptViewportRows) {
+      const delta = step || Math.max(1, this.transcriptViewportRows - 1);
+      this.transcriptScrollOffset = Math.max(0, this.transcriptScrollOffset - delta);
+      this.render();
+    } else if (this.activeTab === 2 && this.chatRenderedRowCount > this.chatViewportRows) {
+      const delta = step || Math.max(1, this.chatViewportRows - 1);
+      this.chatScrollOffset = Math.max(0, this.chatScrollOffset - delta);
+      this.render();
+    } else if (this.activeTab === 0 && this.settingsRenderedRowCount > this.settingsViewportRows) {
+      const maxScroll = Math.max(0, this.settingsRenderedRowCount - this.settingsViewportRows);
+      this.settingsScrollOffset = Math.min(maxScroll, this.settingsScrollOffset + (step || 2));
+      this.render();
+    }
+  }
+
+  private renderScrollBarTrack(
+    viewportRows: number,
+    totalRows: number,
+    scrollOffsetFromBottom: number,
+    thumbColor: (s: string) => string = c.cyanBright,
+  ): string[] {
+    const track: string[] = [];
+    if (viewportRows <= 0) return track;
+    if (totalRows <= viewportRows) {
+      for (let i = 0; i < viewportRows; i++) {
+        track.push(c.slateBorder('│'));
+      }
+      return track;
+    }
+    const maxScroll = totalRows - viewportRows;
+    const clampedOffset = Math.max(0, Math.min(scrollOffsetFromBottom, maxScroll));
+    const scrollFraction = maxScroll > 0 ? (maxScroll - clampedOffset) / maxScroll : 1;
+    const thumbHeight = Math.max(1, Math.min(viewportRows, Math.round((viewportRows / totalRows) * viewportRows)));
+    const availableTrack = Math.max(0, viewportRows - thumbHeight);
+    const thumbTop = Math.min(availableTrack, Math.max(0, Math.round(scrollFraction * availableTrack)));
+
+    for (let r = 0; r < viewportRows; r++) {
+      if (r === 0 && thumbTop > 0) {
+        track.push(c.slateMuted('▲'));
+      } else if (r === viewportRows - 1 && thumbTop + thumbHeight < viewportRows) {
+        track.push(c.slateMuted('▼'));
+      } else if (r >= thumbTop && r < thumbTop + thumbHeight) {
+        track.push(thumbColor('█'));
+      } else {
+        track.push(c.slateBorder('░'));
+      }
+    }
+    return track;
+  }
+
   public previewArtifacts(): void {
     const lastBuildPath = path.join(this.projectRoot, '.maos', 'last-build.json');
     let entrypoint: string | null = null;
@@ -2006,7 +2299,9 @@ export class MaosTui {
     const distHtml = path.resolve(this.projectRoot, 'dist-preview', 'index.html');
     const rootHtml = path.resolve(this.projectRoot, 'index.html');
 
-    if (entrypoint && fs.existsSync(entrypoint)) {
+    if (entrypoint && entrypoint.includes('apps') && fs.existsSync(outputHtml)) {
+      entrypoint = outputHtml;
+    } else if (entrypoint && fs.existsSync(entrypoint)) {
       // Valid target from manifest
     } else if (fs.existsSync(outputHtml)) {
       entrypoint = outputHtml;
@@ -2027,21 +2322,24 @@ export class MaosTui {
     const isHtml = entrypoint.endsWith('.html');
     if (isHtml) {
       try {
+        const port = this.ensurePreviewServer();
+        const rel = path.relative(this.projectRoot, entrypoint).replace(/\\/g, '/');
+        const targetUrl = port > 0 ? `http://localhost:${port}/${rel}` : entrypoint;
         let command: string;
         let args: string[];
         if (process.platform === 'win32') {
           command = 'cmd.exe';
-          args = ['/d', '/s', '/c', 'start', '', entrypoint];
+          args = ['/d', '/s', '/c', 'start', '', targetUrl];
         } else if (process.platform === 'darwin') {
           command = 'open';
-          args = [entrypoint];
+          args = [targetUrl];
         } else {
           command = 'xdg-open';
-          args = [entrypoint];
+          args = [targetUrl];
         }
         execFile(command, args, () => {});
         this.statusMessage = `Launched preview: ${path.basename(entrypoint)} in default browser.`;
-        this.appendTranscript(`🚀 Live Preview launched in your browser: ${entrypoint}`);
+        this.appendTranscript(`🚀 Live Preview launched in your browser: ${targetUrl}`);
         this.appendTranscript(`✓ Output verified from ${filesCount ? `${filesCount} generated files` : './output/'}.`);
       } catch (err: unknown) {
         this.statusMessage = `Failed to open preview: ${err instanceof Error ? err.message : String(err)}`;
@@ -2263,7 +2561,11 @@ export class MaosTui {
       for (let i = 0; i < bodyRows; i++) lines.push(pad(pageAt(i), mainW));
     }
 
-    if (hasStatus) {
+    if (this.prefixActive) {
+      lines.push(c.slateBorder('─'.repeat(W)));
+      const prefixBanner = `${chalk.bgHex('#06B6D4').hex('#000000').bold(' ⚡ PREFIX (Ctrl+B) ACTIVE ')} ${c.boldWhite('Press:')} ${c.emerald('P')} ${c.slateMuted('Preview')}  ${c.amber('G')} ${c.slateMuted('Model')}  ${c.cyanBright('R')} ${c.slateMuted('Refresh')}  ${c.white('I')} ${c.slateMuted('Ignite')}  ${c.white('0-5')} ${c.slateMuted('Tab')}  ${c.slateMuted('Esc: Cancel')}`;
+      lines.push(fullLine(prefixBanner));
+    } else if (hasStatus) {
       lines.push(c.slateBorder('─'.repeat(W)));
       const status = `${c.amber('STATUS')}  ${c.white(this.statusMessage)}`;
       lines.push(fullLine(status));
@@ -2278,6 +2580,7 @@ export class MaosTui {
           ]
         : this.activeTab === 1
           ? [
+              `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
               `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
               `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
               `${c.boldWhite('P')} ${c.emerald('Preview')}`,
@@ -2296,6 +2599,7 @@ export class MaosTui {
             ]
           : this.activeTab === 2
             ? [
+                `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
                 `${c.boldWhite('Enter')} ${c.slateMuted('Send Message')}`,
                 `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
                 ...(this.chatMessages.length > 0 ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
@@ -2355,7 +2659,7 @@ export class MaosTui {
     const promptW = Math.min(76, W - 4);
 
     if (this.transcript.length > 0) {
-      const transcriptWidth = Math.max(1, W - 1);
+      const transcriptWidth = Math.max(1, W - 2);
       const rows = this.transcript.flatMap((line) => wrapTerminalLine(line, transcriptWidth));
       if (this.externalCommandRunning && this.commandOutputRemainder) {
         rows.push(...wrapTerminalLine(this.commandOutputRemainder, transcriptWidth));
@@ -2379,17 +2683,31 @@ export class MaosTui {
       const end = rows.length - this.transcriptScrollOffset;
       const start = Math.max(0, end - viewportRows);
       const visibleRows = rows.slice(start, end);
-      for (let i = visibleRows.length; i < viewportRows; i++) lines.push('');
-      for (const row of visibleRows) {
+
+      const scrollBar = this.renderScrollBarTrack(
+        viewportRows,
+        rows.length,
+        this.transcriptScrollOffset,
+        c.cyanBright,
+      );
+
+      const paddingRows = viewportRows - visibleRows.length;
+      for (let i = 0; i < paddingRows; i++) {
+        lines.push(`${' '.repeat(transcriptWidth)} ${scrollBar[i] || c.slateBorder('│')}`);
+      }
+      for (let j = 0; j < visibleRows.length; j++) {
+        const row = visibleRows[j];
+        let styled = '';
         if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(row)) {
-          lines.push(c.cyanBright(row));
+          styled = c.cyanBright(row);
         } else if (row.startsWith('✓')) {
-          lines.push(c.emerald(row));
+          styled = c.emerald(row);
         } else if (row.startsWith('✗') || row.startsWith('Error:')) {
-          lines.push(c.pink(row));
+          styled = c.pink(row);
         } else {
-          lines.push(c.slateText(row));
+          styled = c.slateText(row);
         }
+        lines.push(`${fitTerminalLine(styled, transcriptWidth)} ${scrollBar[paddingRows + j] || c.slateBorder('│')}`);
       }
 
       lines.push(c.slateBorder('─'.repeat(W)));
@@ -2544,8 +2862,21 @@ export class MaosTui {
     const start = Math.max(0, end - availableChatRows);
     const visibleChatRows = chatDisplayRows.slice(start, end);
 
-    for (let i = visibleChatRows.length; i < availableChatRows; i++) lines.push('');
-    for (const row of visibleChatRows) lines.push(row);
+    const scrollBar = this.renderScrollBarTrack(
+      availableChatRows,
+      chatDisplayRows.length,
+      this.chatScrollOffset,
+      c.violetBright,
+    );
+
+    const paddingRows = availableChatRows - visibleChatRows.length;
+    for (let i = 0; i < paddingRows; i++) {
+      lines.push(`${' '.repeat(chatContentWidth)} ${scrollBar[i] || c.slateBorder('│')}`);
+    }
+    for (let j = 0; j < visibleChatRows.length; j++) {
+      const row = visibleChatRows[j];
+      lines.push(`${fitTerminalLine(row, chatContentWidth)} ${scrollBar[paddingRows + j] || c.slateBorder('│')}`);
+    }
 
     // Inline Chat Prompt Box
     const innerW = Math.max(0, W - 4);

@@ -522,9 +522,12 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
   let entrypointType: 'html' | 'node' | 'python' | 'unknown' = 'unknown';
   let previewCommand: string | undefined;
 
-  const htmlFile = files.find(
-    (f) => f.path === 'index.html' || f.path.endsWith('/index.html') || f.path.endsWith('.html'),
-  );
+  const rootIndex = files.find((f) => f.path === 'index.html');
+  const nonAppIndex = files.find((f) => f.path.endsWith('/index.html') && !f.path.startsWith('apps/'));
+  const nonAppHtml = files.find((f) => f.path.endsWith('.html') && !f.path.startsWith('apps/'));
+  const anyIndex = files.find((f) => f.path.endsWith('index.html'));
+  const anyHtml = files.find((f) => f.path.endsWith('.html'));
+  const htmlFile = rootIndex || nonAppIndex || nonAppHtml || anyIndex || anyHtml;
   if (htmlFile) {
     entrypoint = path.join('output', htmlFile.path);
     entrypointType = 'html';

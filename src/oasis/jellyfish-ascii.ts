@@ -288,40 +288,124 @@ export function renderColoredJellyfish(t: number = 0, cols: number = meta.cols, 
 
 /**
  * Compact Jellyfish Mascot (8 rows x 20 cols) optimized for TUI Header & Cards.
- * Features animated pulsing bell and dynamic tentacle wave.
+ * Implements the authentic mathematical moon jelly simulation (P = 2.2s stroke)
+ * scaled to compact header dimensions with bell squeezing, inner horseshoe ring,
+ * rim margin, oral arms, trailing tentacles, and cyberpunk luminescence.
  */
 export function renderJellyfishMascot(t: number = 0): string[] {
-  const sq = squeeze(t);
-  const wave = Math.sin(t * 3.5);
-  const w1 = wave > 0.3 ? '/' : wave < -0.3 ? '\\' : '|';
-  const w2 = wave > 0.3 ? '\\' : wave < -0.3 ? '/' : '|';
+  const cols = 20;
+  const rows = 8;
+  const grid = new Array(cols * rows).fill(' ');
+  const c = squeeze(t);
+  const cx = cols / 2 + 0.6 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const rimY = Math.floor(3.5 - 0.4 * c - 0.5 * lift(t));
+  const a = 6.2 - 1.2 * c;
+  const b = 4.2 + 0.8 * c;
+  const half = a * (1 - 0.28 * c);
 
-  // Bell expands and squeezes dynamically
-  const bellTop = sq > 0.5 ? '     .---:---.      ' : '    .--:::::--.     ';
-  const bellMid1 = sq > 0.5 ? '   .-:::::::::-.    ' : '  .---:::::::---.   ';
-  const bellMid2 = sq > 0.5 ? '  .=*++#:::#+*+=.   ' : ' .=**++#:::#++**=.  ';
-  const bellLow = sq > 0.5 ? '  (=+:::*::*::+=)   ' : ' (=+::::*::*::::+=) ';
-  const rim = sq > 0.5 ? "   ~'~'~'~'~'~'~    " : "  ~'~'~'~'~'~'~'~   ";
-  const t1 = `    ${w1} ( ; ; ) ${w2}     `;
-  const t2 = `    ) ${w2} ; ; ${w1} (     `;
-  const t3 = `    : : . . : :     `;
+  const width = (s: number) => a * Math.sqrt(Math.max(0, 1 - s * s)) * (1 - 0.3 * c * (1 - s) ** 2);
+  const inside = (X: number, yy: number) => {
+    const s = ((rimY - yy) * 2) / b;
+    return s >= 0 && s < 1 && Math.abs(X) < width(s);
+  };
 
-  const rows = [bellTop, bellMid1, bellMid2, bellLow, rim, t1, t2, t3];
+  // Bell surface
+  for (let r = 0; r < rimY; r++) {
+    for (let x = 0; x < cols; x++) {
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      for (let j = 0; j < 4; j++) {
+        for (let i = 0; i < 3; i++) {
+          if (inside(x + (i + 0.5) / 3 - cx, r + (j + 0.5) / 4)) {
+            n++;
+            sx += i - 1;
+            sy += (j - 1.5) / 1.5;
+          }
+        }
+      }
+      if (!n) continue;
+      const k = r * cols + x;
+      if (n < 7) {
+        const ux = sx / n;
+        const uy = sy / n;
+        if (uy > Math.abs(ux) * 1.2) grid[k] = n < 4 ? '_' : '-';
+        else if (Math.abs(ux) > uy * 1.5) grid[k] = ux > 0 ? '(' : ')';
+        else grid[k] = n < 4 ? '.' : ux > 0 ? '/' : '\\';
+        continue;
+      }
+      const s = Math.max(0, ((rimY - r - 0.5) * 2) / b);
+      const u = Math.max(-0.999, Math.min(0.999, (x + 0.5 - cx) / Math.max(0.1, width(s))));
+      const nz = Math.sqrt(1 - u * u) * Math.sqrt(1 - s * s);
+      const ph = Math.asin(u);
+      const g = Math.min(Math.abs(ph - 0.6), Math.abs(ph + 0.6));
+      const ring = Math.max(0, 1 - Math.abs(Math.hypot(g / 0.36, (s - 0.45) / 0.26) - 1) * 3.5);
+      const crown = 1 - 0.6 * ease(Math.max(0, (s - 0.62) / 0.38));
+      const v = Math.min(1, (0.16 + 0.07 * s + 0.6 * (1 - nz) ** 2) * crown + 0.55 * ring);
+      grid[k] = RAMP[Math.max(1, Math.round(v * (RAMP.length - 1)))];
+    }
+  }
 
-  return rows.map((row, idx) => {
+  // Rim margin
+  for (let x = 0; x < cols; x++) {
+    const u = (x + 0.5 - cx) / Math.max(0.1, width(0));
+    if (Math.abs(u) < 1) {
+      grid[rimY * cols + x] = Math.abs(u) > 0.9 ? "'" : x & 1 ? '~' : "'";
+    }
+  }
+
+  // Trailing undulating tentacles
+  const tentacleCount = 5;
+  for (let i = 0; i < tentacleCount; i++) {
+    const u = -0.82 + (1.64 * i) / (tentacleCount - 1);
+    const tx = cx + u * half;
+    for (let y = rimY + 1; y < rows; y++) {
+      const d = y - rimY;
+      const wob = Math.sin(d * 0.9 - t * 3.2 + i * 1.9);
+      const curX = Math.round(tx + (0.07 + d * 0.02) * d * wob);
+      if (curX >= 0 && curX < cols) {
+        const isMouth = d <= 2 && Math.abs(u) < 0.25;
+        const ch =
+          isMouth
+            ? ';'
+            : d >= 4
+              ? d === rows - rimY - 1
+                ? '.'
+                : ':'
+              : wob > 0.3
+                ? '/'
+                : wob < -0.3
+                  ? '\\'
+                  : '|';
+        grid[y * cols + curX] = ch;
+      }
+    }
+  }
+
+  const rawRows: string[] = [];
+  for (let r = 0; r < rows; r++) {
+    rawRows.push(grid.slice(r * cols, (r + 1) * cols).join(''));
+  }
+
+  return rawRows.map((row, idx) => {
     let colored = '';
     for (const char of row) {
       if (char === ' ') {
         colored += ' ';
-      } else if (idx < 2) {
-        colored += palette.violetBright(char);
-      } else if (idx < 4) {
-        if (['#', '*', '@'].includes(char)) colored += palette.cyanBright(char);
-        else colored += palette.violet(char);
-      } else if (idx === 4) {
+      } else if (idx < rimY) {
+        if (['@', '%', '#', '*'].includes(char)) {
+          colored += palette.cyanBright(char);
+        } else if (['+', '=', ':'].includes(char)) {
+          colored += palette.violetBright(char);
+        } else {
+          colored += palette.violet(char);
+        }
+      } else if (idx === rimY) {
         colored += palette.cyan(char);
       } else if (char === ';') {
         colored += palette.emerald(char);
+      } else if (['.', ':'].includes(char)) {
+        colored += palette.slateMuted(char);
       } else {
         colored += palette.cyanBright(char);
       }

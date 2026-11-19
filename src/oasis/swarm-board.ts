@@ -47,16 +47,15 @@ export function terminalCellWidth(value: string | undefined | null): number {
         (point >= 0xffe0 && point <= 0xffe6) ||
         (point >= 0x1f300 && point <= 0x1faff) ||
         (point >= 0x20000 && point <= 0x3fffd));
+    const hasVS16 = points.includes(0xfe0f);
     const emojiPresentation =
-      points.includes(0xfe0f) ||
+      (hasVS16 && point !== 0x2713 && point !== 0x2714) ||
       points.includes(0x20e3) ||
       points.filter((v) => v >= 0x1f1e6 && v <= 0x1f1ff).length === 2 ||
-      points.some(
-        (v) =>
-          (v >= 0x1f000 && v <= 0x1faff) ||
-          (v >= 0x2700 && v <= 0x27bf) || // Dingbats (❌ 0x274c, ✅ 0x2705, etc.)
-          (v >= 0x2600 && v <= 0x26ff && [0x26a0, 0x26a1, 0x26d4, 0x267f, 0x2699].includes(v)),
-      );
+      (point >= 0x1f300 && point <= 0x1faff) ||
+      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(point) ||
+      (hasVS16 && [0x26a0, 0x2699, 0x26d4, 0x26a1, 0x267f].includes(point)) ||
+      (!hasVS16 && [0x26a1, 0x26d4, 0x267f].includes(point));
     width += wide || emojiPresentation ? 2 : 1;
   }
   return width;
@@ -486,7 +485,7 @@ export function renderSwarmBoard(
     `${c.slateText('Swarm Health:')} ${c.emerald('Strict Loopback')} ${c.slateMuted('·')} ${c.slateText('Healer:')} ${c.cyanBright('Scrollback Watcher Active')} ${c.slateMuted('·')} ${c.slateText('Egress:')} ${c.emerald('0.00 KB')}`,
     `${c.slateText('Controls:')} ${c.boldWhite('↑/↓')} ${c.slateMuted('select agent')} ${c.slateBorder('·')} ${c.boldWhite('Enter')} ${c.slateMuted('toggle expand')} ${c.slateBorder('·')} ${c.boldWhite('P')} ${c.emerald('preview built artifacts')}`,
     c.slateBorder('─'.repeat(headerInfoWidth)),
-    `${c.slateMuted('Antigravity CLI Swarm Engine')} ${c.slateBorder('│')} ${c.violetBright('Moon Jellyfish Swarm Kernel')}`,
+    `${c.slateMuted('MAOS Sovereign Swarm Engine')} ${c.slateBorder('│')} ${c.violetBright('Moon Jellyfish Swarm Kernel')}`,
   ];
 
   const headerHeight = Math.max(mascotLines.length, infoRows.length);
