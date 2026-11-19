@@ -2,10 +2,13 @@
  * Jellyfish ASCII Art & Mascot Generator for MAOS Oasis Swarm Board.
  *
  * Implements the mathematical moon jelly simulation:
- * - Pulsing bell squeezing and relaxing (P = 2.2s stroke)
- * - Trailing tentacles with staggered phase lags
- * - Frilled oral mouth arms twisting with sinusoids
- * - Ambient drifting plankton specks
+ * - Graceful translucent bell umbrella dome with curved crown
+ * - Four signature glowing horseshoe gonads (Aurelia aurita cloverleaf luminescence)
+ * - Pulsing bell squeezing and relaxing (P = 2.2s stroke) with hydrodynamic lift
+ * - Wavy scalloped rim margin with dynamic undulation
+ * - Ribbon-like oral mouth arms frilled with ';'
+ * - Staggered phase-lagged trailing marginal tentacles
+ * - Ambient drifting ocean plankton specks ('·' and '.')
  * - Styled with MAOS Oasis cyberpunk palette:
  *   violet (#8B5CF6), cyan (#06B6D4), cyanBright (#38BDF8), emerald (#10B981), slate (#64748B)
  */
@@ -30,7 +33,6 @@ export const meta: JellyfishMeta = {
   fps: 24,
 };
 
-const RAMP = ' .::=+*#%@';
 const P = 2.2;
 const SQ = 0.28;
 
@@ -55,9 +57,9 @@ export const rimAt = (
   const c = squeeze(t);
   const scaleX = totalCols / meta.cols;
   const scaleY = totalRows / meta.rows;
-  const x = totalCols / 2 + 1.5 * scaleX * Math.sin((2 * Math.PI * t) / (5 * P));
-  const y = (11 - 0.8 * c - 1.4 * lift(t)) * scaleY;
-  const half = (13 - 2.6 * c) * (1 - 0.3 * c) * scaleX;
+  const x = totalCols / 2 + 1.2 * scaleX * Math.sin((2 * Math.PI * t) / (5 * P));
+  const y = (11 - 1.0 * lift(t) - 0.7 * c) * scaleY;
+  const half = (13.5 - 2.8 * c) * scaleX;
   return { c, x, y, half };
 };
 
@@ -82,101 +84,117 @@ export const palette = {
 /**
  * Generates an uncolored raw compact moon jelly ASCII frame (e.g. 20x8)
  * maintaining authentic mathematical moon jelly geometry:
- * - 3-row arched bell dome with curved crown and inner horseshoe luminescence (* / #)
- * - Signature wavy rim margin ('~'~'~'~') modulating with stroke squeeze
- * - 4 spaced trailing tentacles that undulate with wave lag, bowing with ( ) / \ |
+ * - Smooth arched crown apex
+ * - Translucent umbrella dome with glowing horseshoe gonads (* / +)
+ * - Signature wavy scalloped rim margin ('~' and "'")
+ * - 4 spaced fluidly trailing marginal tentacles undulating with wave lag
  * - 2 central frilled oral mouth arms with ';'
- * - Fading tips with ':' and '.'
+ * - Fading tips with ':'
  */
 export function generateCompactJellyfishRawFrame(t: number = 0, cols: number = 20, rows: number = 8): string {
   const c = squeeze(t);
-  const cx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const drift = 0.5 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const cx = cols / 2 + drift;
   const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
 
-  const rimRow = Math.max(2, Math.floor(rows * 0.45));
-  const domeRows = rimRow;
-  const half = (cols * 0.38 - 1.8 * c) * (1 - 0.15 * c);
+  const rimRow = Math.max(2, Math.min(rows - 3, Math.floor(rows * 0.42)));
+  const half = cols * 0.38 - 1.6 * c;
 
-  // Bell dome rows: 0 to rimRow - 1
-  for (let r = 0; r < domeRows; r++) {
-    const s = (domeRows - r - 0.5) / domeRows; // 1 at top, ~0 near rim
-    const w = Math.max(2, Math.round(half * Math.sqrt(Math.max(0.1, 1 - s * s * 0.8))));
-    const left = Math.round(cx - w);
-    const right = Math.round(cx + w);
-    for (let x = left; x <= right; x++) {
-      if (x >= 0 && x < cols) {
-        if (r === 0) {
-          grid[r][x] = x === left || x === right ? '.' : '-';
-        } else if (r === domeRows - 1) {
-          if (x === left) grid[r][x] = '(';
-          else if (x === right) grid[r][x] = ')';
-          else {
-            const u = (x - cx) / w;
-            const g = Math.abs(Math.abs(u) - 0.55);
-            if (g < 0.18) grid[r][x] = c > 0.5 ? '*' : '+';
-            else if (Math.abs(u) < 0.22) grid[r][x] = ':';
-            else grid[r][x] = '=';
-          }
-        } else {
-          if (x === left || x === right) grid[r][x] = '_';
-          else {
-            const u = (x - cx) / w;
-            const g = Math.abs(Math.abs(u) - 0.52);
-            grid[r][x] = g < 0.18 ? (c > 0.6 ? '#' : '*') : ':';
-          }
-        }
-      }
-    }
+  // Row 0: Crown apex
+  const w0 = Math.max(2, Math.round(half * 0.42));
+  const cL = Math.round(cx - w0);
+  const cR = Math.round(cx + w0);
+  for (let x = cL; x <= cR; x++) {
+    if (x >= 0 && x < cols) grid[0][x] = x === cL || x === cR ? '.' : '-';
   }
 
-  // Rim Row (signature wavy moon jelly rim margin)
-  const rimW = Math.max(3, Math.round(half + 0.5));
-  const rimLeft = Math.round(cx - rimW);
-  const rimRight = Math.round(cx + rimW);
-  for (let x = rimLeft; x <= rimRight; x++) {
+  // Row 1: Upper bell curve
+  const w1 = Math.max(3, Math.round(half * 0.72));
+  const uL = Math.round(cx - w1);
+  const uR = Math.round(cx + w1);
+  if (uL >= 0 && uL < cols) grid[1][uL] = '.';
+  if (uL + 1 < cols) grid[1][uL + 1] = '-';
+  if (uL + 2 < cols) grid[1][uL + 2] = "'";
+  if (uR >= 0 && uR < cols) grid[1][uR] = '.';
+  if (uR - 1 >= 0) grid[1][uR - 1] = '-';
+  if (uR - 2 >= 0) grid[1][uR - 2] = "'";
+
+  // Faint radial canals in upper bell
+  const rcL = Math.round(cx - w1 * 0.42);
+  const rcR = Math.round(cx + w1 * 0.42);
+  if (rcL > uL + 2 && rcL < rcR) grid[1][rcL] = ':';
+  if (rcR < uR - 2 && rcR > rcL) grid[1][rcR] = ':';
+
+  // Row 2: Mid bell with signature glowing cloverleaf gonads
+  const w2 = Math.max(4, Math.round(half * 0.94));
+  const mL = Math.round(cx - w2);
+  const mR = Math.round(cx + w2);
+  if (mL >= 0 && mL < cols) grid[2][mL] = '(';
+  if (mR >= 0 && mR < cols) grid[2][mR] = ')';
+
+  // Gonads: ( * )  ( * )
+  const gOffset = Math.max(2, Math.round(w2 * 0.42));
+  const gL = Math.round(cx - gOffset);
+  const gR = Math.round(cx + gOffset);
+  const star = c > 0.6 ? '*' : '+';
+  if (gL - 1 > mL) grid[2][gL - 1] = '(';
+  if (gL > mL && gL < mR) grid[2][gL] = star;
+  if (gL + 1 < gR - 1) grid[2][gL + 1] = ')';
+
+  if (gR - 1 > gL + 1) grid[2][gR - 1] = '(';
+  if (gR > mL && gR < mR) grid[2][gR] = star;
+  if (gR + 1 < mR) grid[2][gR + 1] = ')';
+
+  // Row 3: Scalloped wavy rim margin
+  const rL = Math.round(cx - half);
+  const rR = Math.round(cx + half);
+  if (rL >= 0 && rL < cols) grid[rimRow][rL] = "'";
+  if (rR >= 0 && rR < cols) grid[rimRow][rR] = "'";
+  for (let x = rL + 1; x < rR; x++) {
     if (x >= 0 && x < cols) {
-      grid[rimRow][x] = x === rimLeft || x === rimRight ? "'" : (x - rimLeft) % 2 === 1 ? '~' : "'";
+      grid[rimRow][x] = (x - rL) % 2 === 1 ? '~' : '.';
     }
   }
 
-  // 4 Spaced Trailing Tentacles (outer left, inner left, inner right, outer right)
-  const tentU = [-0.85, -0.42, 0.42, 0.85];
+  // Rows 4 to rows - 1: Tentacles & Oral Arms trailing
+  // 4 marginal tentacles
+  const tentU = [-0.85, -0.38, 0.38, 0.85];
   for (let i = 0; i < tentU.length; i++) {
     const u = tentU[i];
     let prevX = cx + u * half;
     for (let y = rimRow + 1; y < rows; y++) {
       const d = y - rimRow;
-      const lagT = t - d * 0.08;
+      const lagT = t - d * 0.12;
       const lagC = squeeze(lagT);
-      const lagHalf = (cols * 0.38 - 1.8 * lagC) * (1 - 0.15 * lagC);
-      const lagCx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * lagT) / (5 * P));
-      const wob = Math.sin(d * 0.7 - t * 3.0 + i * 1.5);
-      const curX = Math.round(lagCx + u * lagHalf + (0.15 + d * 0.08) * wob);
-      const dx = curX - prevX;
-      prevX = curX;
+      const lagHalf = cols * 0.38 - 1.6 * lagC;
+      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const wob = Math.sin(d * 0.85 - t * 3.2 + i * 1.6);
+      const curX = Math.round(lagCx + u * lagHalf * (1 - d * 0.08) + (0.2 + d * 0.12) * wob);
       if (curX >= 0 && curX < cols) {
         let ch = '|';
-        if (d >= rows - rimRow - 1) ch = ':';
+        const dx = curX - prevX;
+        if (d === rows - rimRow - 1) ch = ':';
         else if (dx > 0.4) ch = '\\';
         else if (dx < -0.4) ch = '/';
-        else if (wob > 0.25) ch = ')';
-        else if (wob < -0.25) ch = '(';
+        else if (wob > 0.22) ch = ')';
+        else if (wob < -0.22) ch = '(';
         grid[y][curX] = ch;
       }
+      prevX = curX;
     }
   }
 
-  // 2 Central Frilled Oral Mouth Arms with ';'
+  // 2 central oral mouth arms with ';'
   for (let i = 0; i < 2; i++) {
     const s = i === 0 ? -1 : 1;
     for (let y = rimRow + 1; y < rows; y++) {
       const d = y - rimRow;
-      const lagT = t - d * 0.1;
-      const lagCx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * lagT) / (5 * P));
-      const tw = Math.sin(d * 0.9 - t * 2.5 + i * 2.0);
-      const curX = Math.round(lagCx + s * (1.2 - d * 0.15) + 0.6 * tw);
-      if (curX >= 0 && curX < cols) {
-        grid[y][curX] = d >= rows - rimRow - 1 ? ':' : ';';
+      const lagT = t - d * 0.15;
+      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const tw = Math.sin(d * 1.1 - t * 2.8 + i * 2.2);
+      const curX = Math.round(lagCx + s * (1.2 - d * 0.12) + 0.5 * tw);
+      if (curX >= 0 && curX < cols && grid[y][curX] === ' ') {
+        grid[y][curX] = d === rows - rimRow - 1 ? ':' : ';';
       }
     }
   }
@@ -186,185 +204,154 @@ export function generateCompactJellyfishRawFrame(t: number = 0, cols: number = 2
 
 /**
  * Generates an uncolored raw mathematical ASCII frame (cols x rows) at time t.
+ * Implements a crisp, unmistakable moon jellyfish with:
+ * - Arched crown apex and smooth elliptical dome silhouette
+ * - Translucent umbrella body with signature Aurelia aurita glowing horseshoe gonads
+ * - Dynamic undulating scalloped rim margin
+ * - Central cascading frilled oral arms
+ * - Flowing trailing marginal tentacles with wave lag
+ * - Ambient drifting water plankton specks
  */
 export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.cols, rows: number = meta.rows): string {
   if (cols < 36 || rows < 20) {
     return generateCompactJellyfishRawFrame(t, cols, rows);
   }
 
-  let seed = 7;
-  const rnd = () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let z = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z;
-    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
-  };
-
-  const isStandard = cols === meta.cols && rows === meta.rows;
-  const speckCount = isStandard ? 30 : Math.max(2, Math.round((30 * (cols * rows)) / (meta.cols * meta.rows)));
-
-  const specks = Array.from({ length: speckCount }, () => ({
-    x: rnd() * cols,
-    y: rnd() * rows,
-    z: 0.4 + rnd() * 0.6,
-    w: rnd() * 6.3,
-  }));
-
-  const grid: string[] = new Array(cols * rows);
-  const put = (x: number, y: number, ch: string) => {
-    const rx = Math.round(x);
-    const ry = Math.round(y);
-    if (rx >= 0 && rx < cols && ry >= 0 && ry < rows) grid[ry * cols + rx] = ch;
-  };
-
-  const travel = (time: number) => {
-    const k = Math.floor(time / P);
-    const p = phase(time);
-    return 0.9 * time + 2.4 * (k + (p < SQ ? 0.8 * ease(p / SQ) : 0.8 + (0.2 * (p - SQ)) / (1 - SQ)));
-  };
-
-  grid.fill(' ');
-  const D = travel(t);
-  for (const s of specks) {
-    const y = Math.floor((((s.y + D * s.z) % rows) + rows) % rows);
-    put(s.x + 0.6 * Math.sin(t * 0.5 + s.w), y, s.z > 0.8 ? '·' : '.');
-  }
-
+  const c = squeeze(t);
+  const l = lift(t);
   const scaleX = cols / meta.cols;
   const scaleY = rows / meta.rows;
-  const now = rimAt(t, cols, rows);
-  const { c } = now;
-  const a = (13 - 2.6 * c) * scaleX;
-  const b = (13 + 2 * c) * scaleY;
-  const rim = Math.floor(now.y);
 
-  const trail = (d: number, lagPer: number) => {
-    const was = rimAt(t - (d / scaleY) * lagPer, cols, rows);
-    return { x: was.x, y: rim + d + Math.max(0, was.y - now.y) * 0.8, half: was.half };
+  const cx = cols / 2 + 1.2 * scaleX * Math.sin((2 * Math.PI * t) / (5 * P));
+  const crownY = Math.max(2, Math.round((4 - 1.2 * l) * scaleY));
+  const rimY = Math.max(crownY + 4, Math.round((11 - 1.0 * l - 0.7 * c) * scaleY));
+  const domeHeight = rimY - crownY;
+  const halfW = (13.5 - 2.8 * c) * scaleX;
+
+  const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
+
+  // Ambient specks (plankton in water column)
+  let seed = 42;
+  const rnd = () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
   };
-  const cx = now.x;
-
-  const strand = (
-    len: number,
-    lag: number,
-    xAt: (d: number, at: ReturnType<typeof trail>) => number,
-    mark: (x: number, y: number, dx: number, bow: number, d: number, f: number) => void,
-  ) => {
-    let d = 1;
-    let px = xAt(1, trail(1, lag));
-    let pdx = 0;
-    for (let y = rim + 1; y < rows; y++) {
-      while (d < len && trail(d, lag).y < y) d += 0.25;
-      if (d >= len) break;
-      const x = xAt(d, trail(d, lag));
-      const dx = x - px;
-      mark(x, y, dx, dx - pdx, d, d / len);
-      px = x;
-      pdx = dx;
-    }
-  };
-
-  for (let i = 0; i < 8; i++) {
-    const u = -0.92 + (1.84 * i) / 7;
-    const wob = (d: number) => Math.sin((d / scaleY) * 0.5 - t * 3 + i * 1.9);
-    const len = (8.5 + 3.2 * (1 - Math.abs(u)) + ((i * 3) % 5) * 0.8) * scaleY;
-    strand(
-      len,
-      0.06,
-      (d, at) => at.x + u * at.half * (1 - 0.01 * (d / scaleY)) + (0.05 + (d / scaleY) * 0.013) * d * wob(d),
-      (x, y, dx, bow, _d, f) => {
-        const ch =
-          f > 0.9
-            ? '.'
-            : f > 0.8
-              ? ':'
-              : dx > 0.6
-                ? '\\'
-                : dx < -0.6
-                  ? '/'
-                  : bow > 0.22
-                    ? '('
-                    : bow < -0.22
-                      ? ')'
-                      : '|';
-        put(x, y, ch);
-      },
-    );
+  const speckCount = Math.max(6, Math.round((22 * (cols * rows)) / (meta.cols * meta.rows)));
+  for (let i = 0; i < speckCount; i++) {
+    const sx = Math.floor(rnd() * cols);
+    const sy = Math.floor((rnd() * rows + t * 0.8) % rows);
+    if (grid[sy][sx] === ' ') grid[sy][sx] = i % 3 === 0 ? '·' : '.';
   }
 
-  for (let i = 0; i < 2; i++) {
-    const s = i ? 1 : -1;
-    strand(
-      10 * scaleY,
-      0.09,
-      (d, at) =>
-        at.x +
-        s * 2 * scaleX * (1 - (d / scaleY) * 0.06) * (at.half / Math.max(0.1, 10 * scaleX)) +
-        0.9 * scaleX * Math.sin((d / scaleY) * 0.6 - t * 2.2 + i * 2.5),
-      (x, y, _dx, _bow, d, f) => {
-        const tw = Math.cos((d / scaleY) * 1.1 + i * 1.3 - t * 1.6);
-        if (f > 0.8) return put(x, y, f > 0.9 ? '.' : ':');
-        if (Math.abs(tw) < 0.35) return put(x, y, ':');
-        put(x, y, ';');
-        if (tw > 0.5) put(x + s, y, s > 0 ? ')' : '(');
-      },
-    );
-  }
+  // Draw Bell Dome (rows crownY to rimY)
+  for (let y = crownY; y <= rimY; y++) {
+    const prog = (y - crownY) / Math.max(1, domeHeight); // 0 at crown, 1 at rim
+    const w = halfW * Math.sin((prog * Math.PI) / 2);
+    const leftX = Math.round(cx - w);
+    const rightX = Math.round(cx + w);
 
-  const width = (s: number) => a * Math.sqrt(Math.max(0, 1 - s * s)) * (1 - 0.3 * c * (1 - s) ** 2);
-  const inside = (X: number, yy: number) => {
-    const s = ((now.y - yy) * 2) / b;
-    return s >= 0 && s < 1 && Math.abs(X) < width(s);
-  };
+    if (y === crownY) {
+      // Crown apex
+      const topW = Math.max(2, Math.round(halfW * 0.38));
+      const tL = Math.round(cx - topW);
+      const tR = Math.round(cx + topW);
+      for (let x = tL; x <= tR; x++) {
+        if (x >= 0 && x < cols) grid[y][x] = x === tL || x === tR ? '.' : '-';
+      }
+    } else if (y === rimY) {
+      // Wavy scalloped rim margin
+      const rL = Math.round(cx - halfW);
+      const rR = Math.round(cx + halfW);
+      for (let x = rL; x <= rR; x++) {
+        if (x >= 0 && x < cols) {
+          if (x === rL || x === rR) grid[y][x] = "'";
+          else grid[y][x] = (x - rL) % 2 === 1 ? '~' : "'";
+        }
+      }
+    } else {
+      // Bell perimeter
+      if (leftX >= 0 && leftX < cols) {
+        grid[y][leftX] = prog < 0.28 ? '.' : prog < 0.65 ? '/' : '(';
+      }
+      if (rightX >= 0 && rightX < cols) {
+        grid[y][rightX] = prog < 0.28 ? '.' : prog < 0.65 ? '\\' : ')';
+      }
 
-  for (let x = 0; x < cols; x++) {
-    const u = (x + 0.5 - cx) / Math.max(0.1, width(0));
-    if (Math.abs(u) < 1) grid[rim * cols + x] = Math.abs(u) > 0.93 ? "'" : x & 1 ? '~' : "'";
-  }
+      // Inside translucent umbrella: 4 horseshoe cloverleaf gonads + radial canals
+      for (let x = leftX + 1; x < rightX; x++) {
+        const u = (x - cx) / Math.max(1, w);
+        const absU = Math.abs(u);
 
-  const edgeThreshold = isStandard
-    ? 10
-    : Math.max(5, Math.min(10, Math.round(10 * Math.min(1, Math.max(0.5, (scaleX + scaleY) / 2)))));
+        // 4 Horseshoe cloverleaf gonads in middle rows of dome
+        const midProg = prog >= 0.35 && prog <= 0.78;
+        if (midProg) {
+          const gDist = Math.abs(absU - 0.44);
+          if (gDist < 0.11) {
+            grid[y][x] = c > 0.6 ? '#' : c > 0.3 ? '*' : '+';
+            continue;
+          } else if (gDist < 0.2) {
+            grid[y][x] = absU < 0.44 ? '(' : ')';
+            continue;
+          }
+        }
 
-  for (let r = 0; r < rim; r++) {
-    for (let x = 0; x < cols; x++) {
-      let n = 0;
-      let sx = 0;
-      let sy = 0;
-      for (let j = 0; j < 4; j++) {
-        for (let i = 0; i < 3; i++) {
-          if (inside(x + (i + 0.5) / 3 - cx, r + (j + 0.5) / 4)) {
-            n++;
-            sx += i - 1;
-            sy += (j - 1.5) / 1.5;
+        // Radial canals radiating outward
+        if (prog > 0.22 && prog < 0.92) {
+          if (Math.abs(absU - 0.72) < 0.04 || Math.abs(absU - 0.22) < 0.04) {
+            grid[y][x] = ':';
           }
         }
       }
-      if (!n) continue;
-      const k = r * cols + x;
-      if (n < edgeThreshold) {
-        const ux = sx / n;
-        const uy = sy / n;
-        if (uy > Math.abs(ux) * 1.2) grid[k] = n < Math.round(edgeThreshold * 0.5) ? '_' : '-';
-        else if (Math.abs(ux) > uy * 1.5) grid[k] = ux > 0 ? '(' : ')';
-        else grid[k] = n < Math.round(edgeThreshold * 0.4) ? '.' : ux > 0 ? '/' : '\\';
-        continue;
-      }
-      const s = Math.max(0, ((now.y - r - 0.5) * 2) / b);
-      const u = Math.max(-0.999, Math.min(0.999, (x + 0.5 - cx) / Math.max(0.1, width(s))));
-      const nz = Math.sqrt(1 - u * u) * Math.sqrt(1 - s * s);
-      const ph = Math.asin(u);
-      const g = Math.min(Math.abs(ph - 0.6), Math.abs(ph + 0.6));
-      const ring = Math.max(0, 1 - Math.abs(Math.hypot(g / 0.36, (s - 0.45) / 0.26) - 1) * 3.5);
-      const crown = 1 - 0.6 * ease(Math.max(0, (s - 0.62) / 0.38));
-      const v = Math.min(1, (0.16 + 0.07 * s + 0.6 * (1 - nz) ** 2) * crown + 0.55 * ring);
-      grid[k] = RAMP[Math.max(1, Math.round(v * (RAMP.length - 1)))];
     }
   }
 
-  const lines: string[] = [];
-  for (let r = 0; r < rows; r++) lines.push(grid.slice(r * cols, (r + 1) * cols).join(''));
-  return lines.join('\n');
+  // Draw 2 Central Frilled Oral Arms (manubrium)
+  for (let arm = 0; arm < 2; arm++) {
+    const s = arm === 0 ? -1 : 1;
+    for (let y = rimY + 1; y < Math.min(rows, rimY + 13); y++) {
+      const d = y - rimY;
+      const lagT = t - d * 0.12;
+      const tw = Math.sin(d * 0.9 - lagT * 2.5 + arm * 2.0);
+      const armX = Math.round(cx + s * (2.2 - d * 0.08) + 1.2 * tw);
+      if (armX >= 0 && armX < cols) {
+        grid[y][armX] = d > 10 ? ':' : ';';
+        if (Math.abs(tw) > 0.5 && armX + s >= 0 && armX + s < cols) {
+          grid[y][armX + s] = s > 0 ? ')' : '(';
+        }
+      }
+    }
+  }
+
+  // Draw 6 Trailing Marginal Tentacles
+  const tentU = [-0.9, -0.6, -0.3, 0.3, 0.6, 0.9];
+  for (let i = 0; i < tentU.length; i++) {
+    const u = tentU[i];
+    let prevX = cx + u * halfW;
+    const len = 12 + ((i * 3) % 4);
+    for (let y = rimY + 1; y < Math.min(rows, rimY + len); y++) {
+      const d = y - rimY;
+      const lagT = t - d * 0.09;
+      const lagC = squeeze(lagT);
+      const lagW = (13.5 - 2.8 * lagC) * scaleX;
+      const lagCx = cols / 2 + 1.2 * scaleX * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const wob = Math.sin(d * 0.55 - t * 3.0 + i * 1.3);
+      const tentX = Math.round(lagCx + u * lagW * (1 - d * 0.03) + (0.5 + d * 0.15) * wob);
+      if (tentX >= 0 && tentX < cols && grid[y][tentX] === ' ') {
+        let ch = '|';
+        const dx = tentX - prevX;
+        if (d >= len - 2) ch = '.';
+        else if (d >= len - 4) ch = ':';
+        else if (dx > 0.4) ch = '\\';
+        else if (dx < -0.4) ch = '/';
+        else if (wob > 0.3) ch = ')';
+        else if (wob < -0.3) ch = '(';
+        grid[y][tentX] = ch;
+      }
+      prevX = tentX;
+    }
+  }
+
+  return grid.map((r) => r.join('')).join('\n');
 }
 
 /**
@@ -379,11 +366,11 @@ export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number)
     return palette.cyan(ch); // Rim margin
   }
   if (ch === ';') {
-    return palette.emerald(ch); // Oral mouth arms
+    return palette.emerald(ch); // Oral mouth arms frills
   }
   if (rowIndex <= rimRow) {
     // Open water specks above bell in 44x26
-    if (ch === '.' && rowIndex < 2 && rimRow > 5) {
+    if (ch === '.' && rowIndex < 3) {
       return palette.slateMuted(ch);
     }
     // Bell body

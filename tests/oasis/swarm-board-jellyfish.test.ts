@@ -503,6 +503,58 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
       (tui as any).cleanupKeyboard();
     });
 
+    it('supports full cursor navigation, word jumps, and editing in prompt boxes', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      (tui as any).activeTab = 1;
+      (tui as any).modalInputText = '';
+
+      // Type initial text
+      for (const ch of 'hello world') {
+        process.stdin.emit('keypress', ch, { name: ch, ctrl: false, meta: false });
+      }
+      expect((tui as any).modalInputText).toBe('hello world');
+      expect((tui as any).modalInput.getCursor()).toBe(11);
+
+      // Move left 5 times (to before 'world')
+      for (let i = 0; i < 5; i++) {
+        process.stdin.emit('keypress', '\x1b[D', { name: 'left', ctrl: false, meta: false });
+      }
+      expect((tui as any).modalInput.getCursor()).toBe(6);
+
+      // Insert 'brave new ' (multi-character dictation / paste)
+      process.stdin.emit('keypress', 'brave new ', { name: undefined, ctrl: false, meta: false });
+      expect((tui as any).modalInputText).toBe('hello brave new world');
+      expect((tui as any).modalInput.getCursor()).toBe(16);
+
+      // Home (or Ctrl+A) jumps to start
+      process.stdin.emit('keypress', '\x01', { name: 'a', ctrl: true, meta: false });
+      expect((tui as any).modalInput.getCursor()).toBe(0);
+
+      // Delete deletes character under cursor ('h')
+      process.stdin.emit('keypress', '\x1b[3~', { name: 'delete', ctrl: false, meta: false });
+      expect((tui as any).modalInputText).toBe('ello brave new world');
+
+      // End (or Ctrl+E) jumps to end
+      process.stdin.emit('keypress', '\x05', { name: 'e', ctrl: true, meta: false });
+      expect((tui as any).modalInput.getCursor()).toBe(20);
+
+      // Backspace deletes 'd'
+      process.stdin.emit('keypress', '\x08', { name: 'backspace', ctrl: false, meta: false });
+      expect((tui as any).modalInputText).toBe('ello brave new worl');
+
+      // Ctrl+W deletes previous word
+      process.stdin.emit('keypress', '\x17', { name: 'w', ctrl: true, meta: false });
+      expect((tui as any).modalInputText).toBe('ello brave new ');
+
+      // Ctrl+U clears line
+      process.stdin.emit('keypress', '\x15', { name: 'u', ctrl: true, meta: false });
+      expect((tui as any).modalInputText).toBe('');
+      expect((tui as any).modalInput.getCursor()).toBe(0);
+
+      (tui as any).cleanupKeyboard();
+    });
+
     it('disables terminal mouse reporting modes on startup and exit', () => {
       const tui = new MaosTui(tmpDir);
       const written: string[] = [];

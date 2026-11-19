@@ -15,7 +15,7 @@ import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
-import { execFile, execSync, spawn, type ChildProcess } from 'child_process';
+import { exec, execFile, execSync, spawn, type ChildProcess } from 'child_process';
 import chalk from 'chalk';
 import { AgentInfo, getDefaultHerdrHarness, PaneInfo } from '../integrations/herdr';
 import { detectLocalModels, DetectedModel, formatHeaderBadge, formatModelDisplayName } from '../oasis/model-detector';
@@ -28,6 +28,7 @@ import {
   renderSwarmBoard,
 } from '../oasis/swarm-board';
 import { renderJellyfishMascot, generateJellyfishRawFrame, renderColoredJellyfish } from '../oasis/jellyfish-ascii';
+import { TextInputState, renderInputContentWithCursor } from './text-input';
 
 // ── Colors & Styles ──────────────────────────────────────────────
 const c = {
@@ -455,7 +456,15 @@ export class MaosTui {
   private selectedModel: string = 'gemma2:9b';
   private detectedModels: DetectedModel[] = [];
   private modalMode: 'none' | 'ignite' | 'promptTest' = 'none';
-  private modalInputText: string = '';
+  private modalInput: TextInputState = new TextInputState();
+  public get modalInputText(): string {
+    return this.modalInput.getText();
+  }
+  public set modalInputText(val: string) {
+    this.modalInput.setText(val, true);
+  }
+  private lastRenderedRowCount: number = 0;
+  private isUpdatingGpu: boolean = false;
   private statusMessage: string = 'Ready. Press Enter to type a goal or slash command; /help lists commands.';
   private commandHistory: string[] = [];
   private commandHistoryIndex: number = -1;
@@ -479,7 +488,13 @@ export class MaosTui {
   private swarmInspectorExpanded: boolean = false;
 
   private chatMessages: ChatMessage[] = [];
-  private chatInputText: string = '';
+  private chatInput: TextInputState = new TextInputState();
+  public get chatInputText(): string {
+    return this.chatInput.getText();
+  }
+  public set chatInputText(val: string) {
+    this.chatInput.setText(val, true);
+  }
   private chatScrollOffset: number = 0;
   private chatViewportRows: number = 8;
   private chatRenderedRowCount: number = 0;
@@ -976,6 +991,19 @@ export class MaosTui {
         return;
       }
 
+      // Synthesize key object for raw terminal sequences (Ctrl+Arrows, Delete, Home, End)
+      if (str === '\x1b[1;5D' || str === '\x1b[5D' || str === '\x1b\x1b[D' || str === '\x1bb') {
+        key = { name: 'left', ctrl: true, meta: false, shift: false };
+      } else if (str === '\x1b[1;5C' || str === '\x1b[5C' || str === '\x1b\x1b[C' || str === '\x1bf') {
+        key = { name: 'right', ctrl: true, meta: false, shift: false };
+      } else if (str === '\x1b[3~') {
+        key = { name: 'delete', ctrl: false, meta: false, shift: false };
+      } else if (str === '\x1b[H' || str === '\x1b[1~') {
+        key = { name: 'home', ctrl: false, meta: false, shift: false };
+      } else if (str === '\x1b[F' || str === '\x1b[4~') {
+        key = { name: 'end', ctrl: false, meta: false, shift: false };
+      }
+
       // ── MOUSE AND ANSI ESCAPE SEQUENCE FILTER ────────────────────────────
       // SGR Extended Mouse Mode: \x1b[<button;col;rowM (press) or \x1b[<button;col;rowm (release)
       // Also handles stripped headers or coordinate fragments like <64;35;12M or 64;35;12M
@@ -1214,7 +1242,7 @@ export class MaosTui {
       if (this.modalMode !== 'none') {
         if (key.name === 'escape') {
           this.modalMode = 'none';
-          this.modalInputText = '';
+          this.modalInput.clearLine();
           this.statusMessage = 'Action cancelled.';
           this.render();
           return;
@@ -1223,16 +1251,55 @@ export class MaosTui {
           this.handleModalSubmit();
           return;
         }
-        if (key.name === 'backspace') {
-          const characters = Array.from(GRAPHEME_SEGMENTER.segment(this.modalInputText), ({ segment }) => segment);
-          characters.pop();
-          this.modalInputText = characters.join('');
+        if (key.name === 'left') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.modalInput.moveLeft(byWord);
+          this.render();
+          return;
+        }
+        if (key.name === 'right') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.modalInput.moveRight(byWord);
+          this.render();
+          return;
+        }
+        if (key.name === 'home' || (key.ctrl && key.name === 'a') || str === '\x01') {
+          this.modalInput.moveToStart();
+          this.render();
+          return;
+        }
+        if (key.name === 'end' || (key.ctrl && key.name === 'e') || str === '\x05') {
+          this.modalInput.moveToEnd();
+          this.render();
+          return;
+        }
+        if (key.name === 'delete') {
+          this.modalInput.deleteForward();
+          this.render();
+          return;
+        }
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.modalInput.deleteBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+          this.modalInput.deleteWordBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'u') || str === '\x15') {
+          this.modalInput.clearLine();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'k') || str === '\x0b') {
+          this.modalInput.clearToEnd();
           this.render();
           return;
         }
         const isPrintable =
           str &&
-          str.length === 1 &&
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
@@ -1240,7 +1307,7 @@ export class MaosTui {
           !/^[<\[;]\d+/.test(str) &&
           !/[\x00-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
-          this.modalInputText += str;
+          this.modalInput.insert(str);
           this.render();
           return;
         }
@@ -1265,8 +1332,8 @@ export class MaosTui {
             this.render();
             return;
           }
-          if (this.modalInputText !== '') {
-            this.modalInputText = '';
+          if (this.modalInput.getText() !== '') {
+            this.modalInput.clearLine();
             this.statusMessage = 'Input cleared.';
           } else {
             // Esc on empty input restores pristine home dashboard view
@@ -1284,8 +1351,8 @@ export class MaosTui {
             this.render();
             return;
           }
-          const command = this.modalInputText.trim();
-          this.modalInputText = '';
+          const command = this.modalInput.getText().trim();
+          this.modalInput.clearLine();
           this.commandHistoryIndex = this.commandHistory.length;
           if (command) {
             this.commandHistory.push(command);
@@ -1297,25 +1364,84 @@ export class MaosTui {
           }
           return;
         }
-        if (key.name === 'backspace') {
-          const characters = Array.from(GRAPHEME_SEGMENTER.segment(this.modalInputText), ({ segment }) => segment);
-          characters.pop();
-          this.modalInputText = characters.join('');
+
+        // Full cursor navigation & editing within prompt box:
+        if (key.name === 'left') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.modalInput.moveLeft(byWord);
           this.render();
           return;
         }
-        if (key.name === 'up' && this.commandHistory.length > 0) {
+        if (key.name === 'right') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.modalInput.moveRight(byWord);
+          this.render();
+          return;
+        }
+        if (key.name === 'home' || (key.ctrl && key.name === 'a') || str === '\x01') {
+          if (this.modalInput.getText() !== '' || this.transcript.length === 0) {
+            this.modalInput.moveToStart();
+            this.render();
+            return;
+          }
+        }
+        if (key.name === 'end' || (key.ctrl && key.name === 'e') || str === '\x05') {
+          if (this.modalInput.getText() !== '' || this.transcript.length === 0) {
+            this.modalInput.moveToEnd();
+            this.render();
+            return;
+          }
+        }
+        if (key.name === 'delete') {
+          this.modalInput.deleteForward();
+          this.render();
+          return;
+        }
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.modalInput.deleteBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+          this.modalInput.deleteWordBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'u') || str === '\x15') {
+          this.modalInput.clearLine();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'k') || str === '\x0b') {
+          this.modalInput.clearToEnd();
+          this.render();
+          return;
+        }
+
+        // History navigation with Up/Down
+        if (
+          key.name === 'up' &&
+          this.commandHistory.length > 0 &&
+          (this.modalInput.getText() === '' ||
+            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
+        ) {
           this.commandHistoryIndex = Math.max(0, this.commandHistoryIndex - 1);
-          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
+          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
           this.render();
           return;
         }
-        if (key.name === 'down' && this.commandHistory.length > 0) {
+        if (
+          key.name === 'down' &&
+          this.commandHistory.length > 0 &&
+          (this.modalInput.getText() === '' ||
+            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
+        ) {
           this.commandHistoryIndex = Math.min(this.commandHistory.length, this.commandHistoryIndex + 1);
-          this.modalInputText = this.commandHistory[this.commandHistoryIndex] || '';
+          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
           this.render();
           return;
         }
+
         if (['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) && this.transcript.length > 0) {
           if (key.ctrl && key.name === 'up') {
             this.scrollUpCurrentView(3);
@@ -1346,7 +1472,7 @@ export class MaosTui {
           return;
         }
 
-        // Capture ANY typed character directly into the input box:
+        // Capture ANY typed or dictated characters directly into the input box at cursor:
         const isPrintable =
           str &&
           !str.includes('\x1b') &&
@@ -1356,7 +1482,7 @@ export class MaosTui {
           !/^[<\[;]\d+/.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
-          this.modalInputText += str;
+          this.modalInput.insert(str);
           this.commandHistoryIndex = this.commandHistory.length;
           this.render();
           return;
@@ -1380,7 +1506,7 @@ export class MaosTui {
             this.render();
             return;
           }
-          this.chatInputText = '';
+          this.chatInput.clearLine();
           this.statusMessage = 'Chat input cleared.';
           this.render();
           return;
@@ -1391,8 +1517,8 @@ export class MaosTui {
             this.render();
             return;
           }
-          const msg = this.chatInputText.trim();
-          this.chatInputText = '';
+          const msg = this.chatInput.getText().trim();
+          this.chatInput.clearLine();
           if (msg) {
             void this.sendGemmaChatMessage(msg, false);
           } else {
@@ -1401,13 +1527,60 @@ export class MaosTui {
           }
           return;
         }
-        if (key.name === 'backspace') {
-          const characters = Array.from(GRAPHEME_SEGMENTER.segment(this.chatInputText), ({ segment }) => segment);
-          characters.pop();
-          this.chatInputText = characters.join('');
+
+        // Full cursor navigation & editing within chat input box:
+        if (key.name === 'left') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.chatInput.moveLeft(byWord);
           this.render();
           return;
         }
+        if (key.name === 'right') {
+          const byWord = Boolean(key.ctrl || key.meta);
+          this.chatInput.moveRight(byWord);
+          this.render();
+          return;
+        }
+        if (key.name === 'home' || (key.ctrl && key.name === 'a') || str === '\x01') {
+          if (this.chatInput.getText() !== '' || this.chatMessages.length === 0) {
+            this.chatInput.moveToStart();
+            this.render();
+            return;
+          }
+        }
+        if (key.name === 'end' || (key.ctrl && key.name === 'e') || str === '\x05') {
+          if (this.chatInput.getText() !== '' || this.chatMessages.length === 0) {
+            this.chatInput.moveToEnd();
+            this.render();
+            return;
+          }
+        }
+        if (key.name === 'delete') {
+          this.chatInput.deleteForward();
+          this.render();
+          return;
+        }
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.chatInput.deleteBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+          this.chatInput.deleteWordBackward();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'u') || str === '\x15') {
+          this.chatInput.clearLine();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'k') || str === '\x0b') {
+          this.chatInput.clearToEnd();
+          this.render();
+          return;
+        }
+
         if (['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) && this.chatMessages.length > 0) {
           if (key.ctrl && key.name === 'up') {
             this.scrollUpCurrentView(3);
@@ -1442,7 +1615,7 @@ export class MaosTui {
           !/^[<\[;]\d+/.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
-          this.chatInputText += str;
+          this.chatInput.insert(str);
           this.render();
           return;
         }
@@ -2684,28 +2857,31 @@ export class MaosTui {
   }
 
   private updateGpuTelemetry(): void {
-    try {
-      const out = execSync(
-        'nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits',
-        {
-          encoding: 'utf-8',
-          timeout: 1000,
-        },
-      );
-      const parts = out
-        .trim()
-        .split(',')
-        .map((p) => parseFloat(p.trim()));
-      if (parts.length >= 5) {
-        this.gpuStats.vramUsedMiB = parts[0];
-        this.gpuStats.vramTotalMiB = parts[1];
-        this.gpuStats.gpuUtil = parts[2];
-        this.gpuStats.tempC = parts[3];
-        this.gpuStats.powerW = parts[4];
-      }
-    } catch {
-      // Fallback: keep previous or nominal values
-    }
+    if (this.isUpdatingGpu) return;
+    this.isUpdatingGpu = true;
+    exec(
+      'nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits',
+      { encoding: 'utf-8', timeout: 1200 },
+      (err, stdout) => {
+        this.isUpdatingGpu = false;
+        if (err || !stdout) return;
+        try {
+          const parts = stdout
+            .trim()
+            .split(',')
+            .map((p) => parseFloat(p.trim()));
+          if (parts.length >= 5 && !isNaN(parts[0])) {
+            this.gpuStats.vramUsedMiB = parts[0];
+            this.gpuStats.vramTotalMiB = parts[1];
+            this.gpuStats.gpuUtil = parts[2];
+            this.gpuStats.tempC = parts[3];
+            this.gpuStats.powerW = parts[4];
+          }
+        } catch {
+          // Keep previous or nominal telemetry
+        }
+      },
+    );
   }
 
   private getNowTime(): string {
@@ -2930,7 +3106,9 @@ export class MaosTui {
       .slice(0, terminalRows)
       .map((l) => fitTerminalLine(l, W))
       .join('\n');
-    process.stdout.write('\x1b[H' + rendered + '\x1b[J');
+    const clearBelow = terminalRows < this.lastRenderedRowCount ? '\x1b[J' : '';
+    this.lastRenderedRowCount = terminalRows;
+    process.stdout.write('\x1b[H' + rendered + clearBelow);
   }
 
   // ── Tab 1: MAOS Oasis welcome screen ───────────────────────────
@@ -2987,13 +3165,17 @@ export class MaosTui {
 
       lines.push(c.slateBorder('─'.repeat(W)));
       const innerW = Math.max(0, W - 4);
-      const prefix = `${c.cyanBright('>')} ${c.slateBorder('│')}  `;
-      const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix) - 1);
+      const prefix = `${c.cyanBright('❯')} ${c.slateBorder('│')}  `;
+      const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix));
       const commandText = this.externalCommandRunning
         ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white(`${this.externalCommandLabel || 'Running'}...`)} ${c.slateMuted('(Ctrl+C to abort · Tab to switch view)')}`
-        : this.modalInputText
-          ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
-          : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`;
+        : renderInputContentWithCursor(
+            this.modalInput.getText(),
+            this.modalInput.getCursor(),
+            inputWidth,
+            'Type a goal or /help for commands',
+            c.boldWhite,
+          );
       const innerContent = prefix + commandText;
       const promptRow = `${c.cyanBright('│ ')}${fitTerminalLine(innerContent, innerW)}${c.cyanBright(' │')}`;
       lines.push(centerTerminalLine(c.cyanBright('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'), W));
@@ -3027,13 +3209,17 @@ export class MaosTui {
     lines.push('');
     lines.push('');
     const promptInnerW = promptW - 4;
-    const prefix = `${c.cyanBright('>')} ${c.slateBorder('│')}  `;
-    const inputWidth = Math.max(0, promptInnerW - terminalCellWidth(prefix) - 1);
+    const prefix = `${c.cyanBright('❯')} ${c.slateBorder('│')}  `;
+    const inputWidth = Math.max(0, promptInnerW - terminalCellWidth(prefix));
     const commandText = this.externalCommandRunning
       ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white(`${this.externalCommandLabel || 'Running'}...`)} ${c.slateMuted('(Ctrl+C to abort · Tab to switch view)')}`
-      : this.modalInputText
-        ? `${c.white(fitTerminalTail(this.modalInputText, inputWidth))}${c.boldWhite('█')}`
-        : `${c.boldWhite('█')} ${c.slateMuted('Type a goal or /help for commands')}`;
+      : renderInputContentWithCursor(
+          this.modalInput.getText(),
+          this.modalInput.getCursor(),
+          inputWidth,
+          'Type a goal or /help for commands',
+          c.boldWhite,
+        );
     const innerContent = prefix + commandText;
     const promptRow = `${c.cyanBright('│ ')}${fitTerminalLine(innerContent, promptInnerW)}${c.cyanBright(' │')}`;
     if (promptW >= 24) {
@@ -3155,13 +3341,17 @@ export class MaosTui {
 
     // Inline Chat Prompt Box
     const innerW = Math.max(0, W - 4);
-    const prefix = `${c.violetBright('💬')} ${c.slateBorder('│')}  `;
-    const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix) - 1);
+    const prefix = `${c.violetBright('❯')} ${c.slateBorder('│')}  `;
+    const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix));
     const inputText = this.chatIsStreaming
       ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white('Generating response...')} ${c.slateMuted('(Loopback inference)')}`
-      : this.chatInputText
-        ? `${c.white(fitTerminalTail(this.chatInputText, inputWidth))}${c.boldWhite('█')}`
-        : `${c.boldWhite('█')} ${c.slateMuted('Ask Gemma anything... (Enter sends · Esc clears)')}`;
+      : renderInputContentWithCursor(
+          this.chatInput.getText(),
+          this.chatInput.getCursor(),
+          inputWidth,
+          'Ask Gemma anything... (Enter sends · Esc clears)',
+          c.boldWhite,
+        );
     const innerContent = prefix + inputText;
     const promptRow = `${c.violetBright('│ ')}${fitTerminalLine(innerContent, innerW)}${c.violetBright(' │')}`;
     lines.push(centerTerminalLine(c.violetBright('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'), W));
@@ -3482,9 +3672,15 @@ export class MaosTui {
 
     const promptWidth = Math.max(0, modalW - 4);
     const inputPrefix = 'Goal: ';
-    const inputWidth = Math.max(0, promptWidth - terminalCellWidth(inputPrefix) - 1);
-    const promptText = `${inputPrefix}${fitTerminalTail(this.modalInputText, inputWidth)}█`;
-    lines.push(padStr + c.pink('│ ') + fitTerminalLine(c.boldWhite(promptText), promptWidth) + c.pink(' │'));
+    const inputWidth = Math.max(0, promptWidth - terminalCellWidth(inputPrefix));
+    const promptText = `${inputPrefix}${renderInputContentWithCursor(
+      this.modalInput.getText(),
+      this.modalInput.getCursor(),
+      inputWidth,
+      'Enter swarm goal...',
+      c.pink,
+    )}`;
+    lines.push(padStr + c.pink('│ ') + fitTerminalLine(promptText, promptWidth) + c.pink(' │'));
 
     const hint = `Press [Enter] to dispatch to Gemma (${this.selectedModel}) · [Esc] to cancel`;
     lines.push(padStr + c.pink('│ ') + fitTerminalLine(c.slateMuted(hint), Math.max(0, modalW - 4)) + c.pink(' │'));
