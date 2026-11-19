@@ -302,8 +302,8 @@ export function renderJellyfishMascot(t: number = 0): string[] {
   const bellMid2 = sq > 0.5 ? '  .=*++#:::#+*+=.   ' : ' .=**++#:::#++**=.  ';
   const bellLow = sq > 0.5 ? '  (=+:::*::*::+=)   ' : ' (=+::::*::*::::+=) ';
   const rim = sq > 0.5 ? "   ~'~'~'~'~'~'~    " : "  ~'~'~'~'~'~'~'~   ";
-  const t1 = `    ${w1} ( ; ; ) ${w2}    `;
-  const t2 = `    ) ${w2} ; ; ${w1} (    `;
+  const t1 = `    ${w1} ( ; ; ) ${w2}     `;
+  const t2 = `    ) ${w2} ; ; ${w1} (     `;
   const t3 = `    : : . . : :     `;
 
   const rows = [bellTop, bellMid1, bellMid2, bellLow, rim, t1, t2, t3];

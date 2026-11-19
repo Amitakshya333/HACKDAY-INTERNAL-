@@ -13,15 +13,23 @@
  */
 
 import chalk from 'chalk';
-import { renderJellyfishMascot, renderColoredJellyfish, generateJellyfishRawFrame } from './jellyfish-ascii';
+import {
+  renderJellyfishMascot,
+  renderColoredJellyfish,
+  generateJellyfishRawFrame,
+  squeeze,
+  lift,
+} from './jellyfish-ascii';
 import { formatHeaderBadge } from './model-detector';
 
 const ANSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-export function terminalCellWidth(value: string): number {
+export function terminalCellWidth(value: string | undefined | null): number {
+  if (value == null) return 0;
+  const str = String(value);
   let width = 0;
-  const plainText = value.replace(ANSI_SEQUENCE, '').replace(/[\r\n]+/g, '');
+  const plainText = str.replace(ANSI_SEQUENCE, '').replace(/[\r\n]+/g, '');
   for (const { segment } of GRAPHEME_SEGMENTER.segment(plainText)) {
     const points = Array.from(segment, (char) => char.codePointAt(0) || 0);
     const point = points.find((v) => v !== 0x200d && !(v >= 0xfe00 && v <= 0xfe0f)) || 0;
@@ -54,9 +62,10 @@ export function terminalCellWidth(value: string): number {
   return width;
 }
 
-export function fitTerminalLine(value: string, width: number): string {
+export function fitTerminalLine(value: string | undefined | null, width: number): string {
   if (width <= 0) return '';
-  const cleanValue = value.replace(/[\r\n]+/g, ' ');
+  const str = value == null ? '' : String(value);
+  const cleanValue = str.replace(/[\r\n]+/g, ' ');
   const fullWidth = terminalCellWidth(cleanValue);
   const clipped = fullWidth > width;
   const limit = clipped ? Math.max(0, width - 1) : width;
@@ -87,8 +96,9 @@ export function fitTerminalLine(value: string, width: number): string {
   return output + ' '.repeat(Math.max(0, width - used));
 }
 
-export function centerTerminalLine(value: string, width: number): string {
-  const cleanValue = value.replace(/[\r\n]+/g, ' ');
+export function centerTerminalLine(value: string | undefined | null, width: number): string {
+  if (value == null) return ' '.repeat(Math.max(0, width));
+  const cleanValue = String(value).replace(/[\r\n]+/g, ' ');
   const valueWidth = terminalCellWidth(cleanValue);
   if (valueWidth >= width) return fitTerminalLine(cleanValue, width);
   const left = Math.floor((width - valueWidth) / 2);
@@ -160,10 +170,34 @@ export interface SwarmBoardState {
 }
 
 /**
+ * Formats model strings into clean, concise roster badges matching the specification:
+ * (e.g. "GEMMA 9B", "GEMMA 4 2B", "GEMMA 2B", "QWEN 3B").
+ */
+export function formatRosterModelBadge(modelStr: string | undefined | null): string {
+  if (!modelStr) return 'GEMMA 9B';
+  const cleaned = String(modelStr)
+    .replace(/\s*·\s*LOCAL$/i, '')
+    .trim();
+  const lower = cleaned.toLowerCase();
+  if (lower.startsWith('gemma 4') || lower.includes('4 e2b') || lower.includes('4:e2b')) return 'GEMMA 4 2B';
+  if (lower.startsWith('gemma 2 9b') || lower.includes('2:9b') || (lower.includes('gemma') && lower.includes('9b')))
+    return 'GEMMA 9B';
+  if (lower.startsWith('gemma 2 2b') || lower.includes('2:2b') || (lower.includes('gemma') && lower.includes('2b')))
+    return 'GEMMA 2B';
+  if (lower.includes('qwen') && (lower.includes('3b') || lower.includes('2.5 3b'))) return 'QWEN 3B';
+  if (lower.includes('qwen') && (lower.includes('7b') || lower.includes('coder'))) return 'QWEN 7B';
+  if (lower.includes('qwen')) return 'QWEN 2.5';
+  return cleaned;
+}
+
+/**
  * Creates realistic default swarm agents tailored to a goal.
  */
 export function createDefaultSwarmAgents(goal: string, model: string = 'gemma2:9b'): SwarmAgent[] {
   const modelBadge = formatHeaderBadge(model);
+  const worker1Model = formatHeaderBadge('gemma4:e2b');
+  const worker2Model = formatHeaderBadge('gemma2:2b');
+  const worker3Model = formatHeaderBadge('gemma2:2b');
 
   return [
     {
@@ -193,7 +227,7 @@ export function createDefaultSwarmAgents(goal: string, model: string = 'gemma2:9
       name: 'Worker 1',
       role: 'HTML & 3D Spatial Viewport',
       state: 'working',
-      model: modelBadge,
+      model: worker1Model,
       branch: 'maos-ignite-0',
       paneId: 'w0:p1',
       taskTitle: 'Three.js Spatial Canvas & DOM Setup',
@@ -219,7 +253,7 @@ export function createDefaultSwarmAgents(goal: string, model: string = 'gemma2:9
       name: 'Worker 2',
       role: 'Scene Graph & Transform Hierarchy',
       state: 'working',
-      model: modelBadge,
+      model: worker2Model,
       branch: 'maos-ignite-1',
       paneId: 'w0:p2',
       taskTitle: 'SceneManager & Transform Engine',
@@ -243,7 +277,7 @@ export function createDefaultSwarmAgents(goal: string, model: string = 'gemma2:9
       name: 'Worker 3',
       role: 'GLSL Shaders & Spatial Audio',
       state: 'working',
-      model: modelBadge,
+      model: worker3Model,
       branch: 'maos-ignite-2',
       paneId: 'w0:p3',
       taskTitle: 'Directional Lighting & Positional FX',
@@ -405,30 +439,49 @@ export function renderSwarmBoard(
     time?: number;
   },
 ): string[] {
-  const W = Math.max(60, options.width);
+  const W = Math.max(30, options.width);
   const time = options.time !== undefined ? options.time : Date.now() / 1000;
   const lines: string[] = [];
-  const pad = (str: string, len: number) => fitTerminalLine(str, len);
+  const pad = (str: string | undefined | null, len: number) => fitTerminalLine(str, len);
 
-  const selectedIdx = Math.max(0, Math.min(state.agents.length - 1, state.selectedAgentIndex || 0));
-  const selectedAgent = state.agents[selectedIdx] || state.agents[0];
+  // Safe agent fallback
+  const fallbackAgent: SwarmAgent = {
+    id: 'coordinator',
+    name: 'Coordinator',
+    role: 'Swarm Orchestrator & Healer',
+    state: 'working',
+    model: formatHeaderBadge(state.model || 'gemma2:9b'),
+    branch: 'main',
+    paneId: 'w0:p0',
+    taskTitle: 'Supervise Swarm & Worktree Isolation',
+    taskDesc: 'The swarm is standing by. Enter a goal or run ignite to launch parallel workers.',
+    gitDiff: ['+ swarm initialized and standing by'],
+  };
+
+  const agents = state.agents && state.agents.length > 0 ? state.agents : [fallbackAgent];
+  const posts = Array.isArray(state.posts) ? state.posts : [];
+  const goalText = state.goal ? state.goal : 'Build and deploy Canva 3D Spatial Studio';
+
+  const validIndex = Number.isFinite(state.selectedAgentIndex) ? Number(state.selectedAgentIndex) : 0;
+  const selectedIdx = Math.max(0, Math.min(agents.length - 1, validIndex));
+  const selectedAgent = agents[selectedIdx] || agents[0];
 
   // ──────────────────────────────────────────────────────────────────────────
   // 1. HEADER WITH JELLYFISH MASCOT
   // ──────────────────────────────────────────────────────────────────────────
   const mascotLines = renderJellyfishMascot(time);
-  const mascotWidth = 20;
-  const headerInfoWidth = Math.max(30, W - mascotWidth - 3);
+  const mascotWidth = W >= 60 ? 20 : Math.max(10, Math.floor(W * 0.35));
+  const headerInfoWidth = Math.max(0, W - mascotWidth - 3);
 
-  const activeCount = state.agents.filter((a) => a.state === 'working').length;
-  const doneCount = state.agents.filter((a) => a.state === 'done').length;
+  const activeCount = agents.filter((a) => a.state === 'working').length;
+  const doneCount = agents.filter((a) => a.state === 'done').length;
   const statusColor = state.status === 'active' ? c.emerald : state.status === 'done' ? c.cyanBright : c.amber;
   const statusText = state.status === 'active' ? '● active' : state.status === 'done' ? '✓ complete' : '○ waiting';
 
   const infoRows: string[] = [
-    `${c.boldWhite('Swarm board')} ${c.cyanBright(`"${pad(state.goal, headerInfoWidth - 28)}"`)}`,
-    `${statusColor(statusText)}  ${c.slateBorder('·')}  ${c.white(String(state.agents.length))} ${c.slateText('agents')} (${c.cyanBright(String(activeCount) + ' working')}${doneCount > 0 ? ', ' + c.emerald(String(doneCount) + ' done') : ''})  ${c.slateBorder('·')}  ${c.violetBright(formatHeaderBadge(state.model))}`,
-    `${c.slateText('Target:')} ${c.white(pad(state.goal, headerInfoWidth - 10))}`,
+    `${c.boldWhite('Swarm board')} ${c.cyanBright(`"${pad(goalText, Math.max(6, headerInfoWidth - 28))}"`)}`,
+    `${statusColor(statusText)}  ${c.slateBorder('·')}  ${c.white(String(agents.length))} ${c.slateText('agents')} (${c.cyanBright(String(activeCount) + ' working')}${doneCount > 0 ? ', ' + c.emerald(String(doneCount) + ' done') : ''})  ${c.slateBorder('·')}  ${c.violetBright(formatHeaderBadge(state.model || 'gemma2:9b'))}`,
+    `${c.slateText('Target:')} ${c.white(pad(goalText, Math.max(6, headerInfoWidth - 10)))}`,
     `${c.slateText('Pipeline:')} ${c.emerald('Goal Decomposition')} ${c.slateMuted('→')} ${c.cyanBright('Parallel Panes')} ${c.slateMuted('→')} ${c.violetBright('Isolated Worktrees')} ${c.slateMuted('→')} ${c.emerald('Merge Barrier')}`,
     `${c.slateText('Swarm Health:')} ${c.emerald('Strict Loopback')} ${c.slateMuted('·')} ${c.slateText('Healer:')} ${c.cyanBright('Scrollback Watcher Active')} ${c.slateMuted('·')} ${c.slateText('Egress:')} ${c.emerald('0.00 KB')}`,
     `${c.slateText('Controls:')} ${c.boldWhite('↑/↓')} ${c.slateMuted('select agent')} ${c.slateBorder('·')} ${c.boldWhite('Enter')} ${c.slateMuted('toggle expand')} ${c.slateBorder('·')} ${c.boldWhite('P')} ${c.emerald('preview built artifacts')}`,
@@ -446,75 +499,167 @@ export function renderSwarmBoard(
   lines.push(c.slateBorder('─'.repeat(W)));
 
   // ──────────────────────────────────────────────────────────────────────────
-  // 2. EXPANDED VIEW OR SPLIT VIEW
+  // 2. EXPANDED VIEW OR NORMAL SPLIT VIEW
   // ──────────────────────────────────────────────────────────────────────────
   if (state.expanded) {
-    // ── Full Expanded Inspector with Mathematical Jellyfish Frame ───────────
-    lines.push(
-      `${c.cyanBright('◈')} ${c.boldWhite('EXPANDED SWARM INSPECTOR')} ${c.slateMuted('—')} ${c.cyanBright(selectedAgent.name)} ${c.slateMuted(`(${selectedAgent.id})`)} ${c.slateBorder('·')} ${c.slateMuted('Press Enter or Esc to collapse')}`,
-    );
-    lines.push('');
+    const banner = `${c.cyanBright('◈')} ${c.boldWhite('EXPANDED SWARM INSPECTOR')} ${c.slateMuted('—')} ${c.cyanBright(selectedAgent.name)} ${c.slateMuted(`(${selectedAgent.id})`)} ${c.slateBorder('·')} ${c.slateMuted('Press Enter or Esc to collapse')}`;
+    lines.push(pad(banner, W));
+    lines.push(c.slateBorder('─'.repeat(W)));
 
-    // Detail boxes:
-    lines.push(
-      `${c.cyanBright('Role:')} ${c.boldWhite(selectedAgent.role)}  ${c.slateBorder('│')}  ${c.slateText('Branch:')} ${c.cyan(selectedAgent.branch)}  ${c.slateBorder('│')}  ${c.slateText('Status:')} ${selectedAgent.state === 'working' ? c.cyanBright('● working') : selectedAgent.state === 'done' ? c.emerald('✓ done') : c.amber('○ waiting')}`,
-    );
-    lines.push(`${c.slateText('Current Task:')} ${c.white(selectedAgent.taskTitle)}`);
-    lines.push(`${c.slateText('Description:')} ${c.slateText(selectedAgent.taskDesc)}`);
-    if (selectedAgent.latestTool) {
-      lines.push(
-        `${c.cyanBright('Latest Tool Call:')} ${c.boldWhite(selectedAgent.latestTool.name)} ${c.slateMuted(`(${selectedAgent.latestTool.args})`)} ${c.slateBorder('→')} ${c.emerald(selectedAgent.latestTool.result)} ${c.slateMuted(`[${selectedAgent.latestTool.time}]`)}`,
+    if (W >= 85) {
+      // 2-column layout: Left = Mathematical Moon Jellyfish (38 cells), Right = Deep Inspector (W - 41 cells)
+      const jellyWidth = 36;
+      const jellyHeight = 16;
+      const leftColWidth = 38;
+      const rightColWidth = Math.max(30, W - leftColWidth - 3);
+
+      const rawJelly = renderColoredJellyfish(time, jellyWidth, jellyHeight);
+      const leftRows: string[] = [
+        pad(c.cyanBright('MOON JELLYFISH SWARM KERNEL'), leftColWidth),
+        c.slateBorder('─'.repeat(leftColWidth)),
+        ...rawJelly.map((jl) => pad(jl, leftColWidth)),
+        c.slateBorder('─'.repeat(leftColWidth)),
+        pad(
+          `${c.slateMuted('P: 2.2s')} ${c.slateBorder('·')} ${c.slateMuted('Squeeze:')} ${c.emerald((squeeze(time) * 100).toFixed(0) + '%')} ${c.slateBorder('·')} ${c.slateMuted('Lift:')} ${c.violetBright((lift(time) * 100).toFixed(0) + '%')}`,
+          leftColWidth,
+        ),
+      ];
+
+      const modelBadgeStr = formatRosterModelBadge(selectedAgent.model);
+      const rightRows: string[] = [
+        pad(
+          `${c.cyanBright('Role:')} ${c.boldWhite(selectedAgent.role)}  ${c.slateBorder('│')}  ${c.slateText('Model:')} ${c.violetBright(modelBadgeStr)}`,
+          rightColWidth,
+        ),
+        pad(
+          `${c.slateText('Branch:')} ${c.cyan(selectedAgent.branch)}  ${c.slateBorder('│')}  ${c.slateText('Pane:')} ${c.white(selectedAgent.paneId || 'w0:p0')}  ${c.slateBorder('│')}  ${c.slateText('Status:')} ${selectedAgent.state === 'working' ? c.cyanBright('● working') : selectedAgent.state === 'done' ? c.emerald('✓ done') : c.amber('○ waiting')}`,
+          rightColWidth,
+        ),
+        pad(`${c.slateText('Current Task:')} ${c.white(selectedAgent.taskTitle)}`, rightColWidth),
+        pad(`${c.slateText('Specs:')} ${c.slateText(selectedAgent.taskDesc)}`, rightColWidth),
+      ];
+
+      if (selectedAgent.latestTool) {
+        rightRows.push(
+          pad(
+            `${c.cyanBright('Latest Tool:')} ${c.boldWhite(selectedAgent.latestTool.name)} ${c.slateMuted(`(${selectedAgent.latestTool.args})`)} ${c.slateBorder('→')} ${c.emerald(selectedAgent.latestTool.result)} ${c.slateMuted(`[${selectedAgent.latestTool.time}]`)}`,
+            rightColWidth,
+          ),
+        );
+      } else {
+        rightRows.push(pad(c.slateMuted('No tool calls dispatched yet.'), rightColWidth));
+      }
+
+      rightRows.push('');
+      rightRows.push(c.slateBorder('╭' + '─'.repeat(Math.max(0, rightColWidth - 2)) + '╮'));
+      rightRows.push(
+        `${c.slateBorder('│ ')}${pad(c.boldWhite('WORKTREE GIT DIFF / VERIFICATION TRACE'), rightColWidth - 4)}${c.slateBorder(' │')}`,
       );
-    }
-    lines.push('');
-    lines.push(c.slateBorder('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'));
-    lines.push(
-      `${c.slateBorder('│ ')}${c.boldWhite('WORKTREE GIT DIFF / VERIFICATION TRACE')}${c.slateBorder(' '.repeat(Math.max(0, W - 42)) + '│')}`,
-    );
-    lines.push(c.slateBorder('├' + '─'.repeat(Math.max(0, W - 2)) + '┤'));
+      rightRows.push(c.slateBorder('├' + '─'.repeat(Math.max(0, rightColWidth - 2)) + '┤'));
 
-    const diffRows = selectedAgent.gitDiff || ['+ No local diff'];
-    for (const d of diffRows.slice(0, 8)) {
-      const col = d.startsWith('+')
-        ? c.emerald
-        : d.startsWith('-')
-          ? c.pink
-          : d.startsWith('✓')
-            ? c.emerald
-            : c.slateText;
-      lines.push(`${c.slateBorder('│ ')}${pad(col(d), W - 4)}${c.slateBorder(' │')}`);
+      const diffRows =
+        selectedAgent.gitDiff && selectedAgent.gitDiff.length > 0 ? selectedAgent.gitDiff : ['+ No local diff'];
+      for (const d of diffRows.slice(0, 9)) {
+        const col = d.startsWith('+')
+          ? c.emerald
+          : d.startsWith('-')
+            ? c.pink
+            : d.startsWith('✓')
+              ? c.emerald
+              : c.slateText;
+        rightRows.push(`${c.slateBorder('│ ')}${pad(col(d), rightColWidth - 4)}${c.slateBorder(' │')}`);
+      }
+      rightRows.push(c.slateBorder('╰' + '─'.repeat(Math.max(0, rightColWidth - 2)) + '╯'));
+
+      const totalH = Math.max(leftRows.length, rightRows.length);
+      for (let r = 0; r < totalH; r++) {
+        const left = leftRows[r] || ' '.repeat(leftColWidth);
+        const right = rightRows[r] || '';
+        lines.push(`${pad(left, leftColWidth)}${c.slateBorder(' │ ')}${pad(right, rightColWidth)}`);
+      }
+    } else {
+      // Single-column layout for narrow viewports
+      const mascot = renderJellyfishMascot(time);
+      for (const mLine of mascot) {
+        lines.push(centerTerminalLine(mLine, W));
+      }
+      lines.push(
+        pad(
+          `${c.cyanBright('Role:')} ${c.boldWhite(selectedAgent.role)}  ${c.slateBorder('│')}  ${c.slateText('Branch:')} ${c.cyan(selectedAgent.branch)}  ${c.slateBorder('│')}  ${c.slateText('Status:')} ${selectedAgent.state === 'working' ? c.cyanBright('● working') : selectedAgent.state === 'done' ? c.emerald('✓ done') : c.amber('○ waiting')}`,
+          W,
+        ),
+      );
+      lines.push(pad(`${c.slateText('Task:')} ${c.white(selectedAgent.taskTitle)}`, W));
+      lines.push(pad(`${c.slateText('Specs:')} ${c.slateText(selectedAgent.taskDesc)}`, W));
+      if (selectedAgent.latestTool) {
+        lines.push(
+          pad(
+            `${c.cyanBright('Tool:')} ${c.boldWhite(selectedAgent.latestTool.name)} ${c.slateMuted(`(${selectedAgent.latestTool.args})`)} → ${c.emerald(selectedAgent.latestTool.result)}`,
+            W,
+          ),
+        );
+      }
+      lines.push('');
+      lines.push(c.slateBorder('╭' + '─'.repeat(Math.max(0, W - 2)) + '╮'));
+      lines.push(
+        `${c.slateBorder('│ ')}${pad(c.boldWhite('WORKTREE GIT DIFF / VERIFICATION TRACE'), W - 4)}${c.slateBorder(' │')}`,
+      );
+      lines.push(c.slateBorder('├' + '─'.repeat(Math.max(0, W - 2)) + '┤'));
+      const diffRows =
+        selectedAgent.gitDiff && selectedAgent.gitDiff.length > 0 ? selectedAgent.gitDiff : ['+ No local diff'];
+      for (const d of diffRows.slice(0, 6)) {
+        const col = d.startsWith('+')
+          ? c.emerald
+          : d.startsWith('-')
+            ? c.pink
+            : d.startsWith('✓')
+              ? c.emerald
+              : c.slateText;
+        lines.push(`${c.slateBorder('│ ')}${pad(col(d), W - 4)}${c.slateBorder(' │')}`);
+      }
+      lines.push(c.slateBorder('╰' + '─'.repeat(Math.max(0, W - 2)) + '╯'));
     }
-    lines.push(c.slateBorder('╰' + '─'.repeat(Math.max(0, W - 2)) + '╯'));
+
+    lines.push(c.slateBorder('─'.repeat(W)));
+    lines.push(
+      pad(
+        `${c.boldWhite('Enter / Esc')} ${c.slateMuted('collapse')}  ${c.slateBorder('·')}  ${c.boldWhite('↑/↓')} ${c.slateMuted('select agent')}  ${c.slateBorder('·')}  ${c.boldWhite('P')} ${c.emerald('preview built artifacts')}`,
+        W,
+      ),
+    );
     return lines;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
   // 3. NORMAL VIEW: ROSTER (LEFT) + POSTS STREAM (RIGHT)
   // ──────────────────────────────────────────────────────────────────────────
-  const rosterWidth = Math.min(38, Math.max(28, Math.floor(W * 0.4)));
-  const postsWidth = Math.max(30, W - rosterWidth - 3);
+  const availableMid = Math.max(10, W - 3);
+  const rosterWidth = Math.max(16, Math.min(38, Math.floor(availableMid * 0.38)));
+  const postsWidth = availableMid - rosterWidth;
 
   // Roster lines:
-  const rosterHeader = `${c.cyanBright('ROSTER')} ${c.slateMuted(`(${state.agents.length} agents)`)}`;
+  const rosterHeader = `${c.cyanBright('ROSTER')} ${c.slateMuted(`(${agents.length} agents)`)}`;
   const rosterLines: string[] = [rosterHeader, c.slateBorder('─'.repeat(rosterWidth))];
 
-  state.agents.forEach((ag, idx) => {
+  agents.forEach((ag, idx) => {
     const isSelected = idx === selectedIdx;
     const bullet = ag.state === 'working' ? c.cyanBright('●') : ag.state === 'done' ? c.emerald('✓') : c.amber('○');
     const pointer = isSelected ? c.cyanBright('▶ ') : '  ';
     const namePart = isSelected ? c.boldWhite(ag.id) : c.white(ag.id);
-    const badge = c.slateMuted(`[${ag.model.split(' ')[0]}]`);
+    const badgeText = formatRosterModelBadge(ag.model);
+    const badge = c.slateMuted(`[${badgeText}]`);
     const line1 = `${pointer}${bullet} ${namePart} ${badge}`;
-    const line2 = `     ${c.slateText(pad(ag.role, rosterWidth - 6))}`;
+    const line2 = `     ${c.slateText(pad(ag.role, Math.max(0, rosterWidth - 6)))}`;
     rosterLines.push(line1);
     rosterLines.push(line2);
   });
 
   // Posts lines (Live Activity Stream):
-  const postsHeader = `${c.cyanBright('POSTS')} ${c.slateMuted(`(${state.posts.length} activity entries)`)}`;
+  const postsHeader = `${c.cyanBright('POSTS')} ${c.slateMuted(`(${posts.length} activity entries)`)}`;
   const postsLines: string[] = [postsHeader, c.slateBorder('─'.repeat(postsWidth))];
 
-  const recentPosts = state.posts.slice(-8);
+  const maxPosts = options.height && options.height > 30 ? 14 : 8;
+  const recentPosts = posts.slice(-maxPosts);
   if (recentPosts.length === 0) {
     postsLines.push(c.slateMuted('  No activity recorded yet. Swarm is standing by.'));
   } else {
@@ -547,15 +692,17 @@ export function renderSwarmBoard(
   // ──────────────────────────────────────────────────────────────────────────
   // 4. MESSAGE / DETAIL INSPECTOR (BOTTOM PANEL)
   // ──────────────────────────────────────────────────────────────────────────
-  const inspectorTitle = `╭─── Inspector: ${selectedAgent.id} [${selectedAgent.role}] ─`;
-  lines.push(c.slateBorder(inspectorTitle + '─'.repeat(Math.max(0, W - terminalCellWidth(inspectorTitle) - 1)) + '╮'));
+  const inspectorLabel = ` Inspector: ${selectedAgent.id} [${selectedAgent.role}] `;
+  const fittedLabel = fitTerminalLine(inspectorLabel, Math.max(0, W - 6));
+  const remainingBorder = Math.max(0, W - terminalCellWidth(fittedLabel) - 4);
+  lines.push(c.slateBorder(`╭──${fittedLabel}${'─'.repeat(remainingBorder)}╮`));
 
   const taskRow = `${c.slateText('Task:')} ${c.white(selectedAgent.taskTitle)}  ${c.slateBorder('│')}  ${c.slateText('Branch:')} ${c.cyan(selectedAgent.branch)}`;
-  lines.push(`${c.slateBorder('│ ')}${pad(taskRow, W - 4)}${c.slateBorder(' │')}`);
+  lines.push(`${c.slateBorder('│ ')}${pad(taskRow, Math.max(0, W - 4))}${c.slateBorder(' │')}`);
 
   if (selectedAgent.latestTool) {
     const toolRow = `${c.slateText('Latest Tool:')} ${c.cyanBright(selectedAgent.latestTool.name)} ${c.slateMuted(`(${selectedAgent.latestTool.args})`)} ${c.slateBorder('→')} ${c.emerald(selectedAgent.latestTool.result)}`;
-    lines.push(`${c.slateBorder('│ ')}${pad(toolRow, W - 4)}${c.slateBorder(' │')}`);
+    lines.push(`${c.slateBorder('│ ')}${pad(toolRow, Math.max(0, W - 4))}${c.slateBorder(' │')}`);
   }
 
   if (selectedAgent.gitDiff && selectedAgent.gitDiff.length > 0) {
@@ -564,7 +711,7 @@ export function renderSwarmBoard(
       .map((d) => (d.startsWith('+') ? c.emerald(d) : c.slateText(d)))
       .join('  ');
     const diffRow = `${c.slateText('Diff:')} ${diffSample}`;
-    lines.push(`${c.slateBorder('│ ')}${pad(diffRow, W - 4)}${c.slateBorder(' │')}`);
+    lines.push(`${c.slateBorder('│ ')}${pad(diffRow, Math.max(0, W - 4))}${c.slateBorder(' │')}`);
   }
 
   lines.push(c.slateBorder('╰' + '─'.repeat(Math.max(0, W - 2)) + '╯'));

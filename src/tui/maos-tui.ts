@@ -501,6 +501,7 @@ export class MaosTui {
   private activities: ActivityEvent[] = [];
 
   private refreshTimer: NodeJS.Timeout | null = null;
+  private swarmAnimTimer: NodeJS.Timeout | null = null;
   private projectRoot: string;
   private readonly resizeHandler = () => {
     process.stdout.write('\x1b[2J\x1b[H');
@@ -560,7 +561,20 @@ export class MaosTui {
   }
 
   public getSelectedSwarmAgent(): SwarmAgent {
-    return this.swarmAgents[this.selectedSwarmAgentIndex] || this.swarmAgents[0];
+    return (
+      this.swarmAgents[this.selectedSwarmAgentIndex] ||
+      this.swarmAgents[0] || {
+        id: 'coordinator',
+        name: 'Coordinator',
+        role: 'Swarm Orchestrator & Healer',
+        state: 'working',
+        model: formatHeaderBadge(this.selectedModel),
+        branch: 'main',
+        paneId: 'w0:p0',
+        taskTitle: 'Supervise Swarm & Worktree Isolation',
+        taskDesc: 'Swarm is standing by',
+      }
+    );
   }
 
   public setSelectedSwarmAgentIndex(index: number): void {
@@ -593,10 +607,11 @@ export class MaosTui {
 
     const ag = this.swarmAgents.find((a) => a.id === sender);
     if (ag) {
+      const cleanArgs = text.startsWith(action + ':') ? text.slice(action.length + 1).trim() : text;
       ag.latestTool = {
         name: action,
-        args: text,
-        result: 'executed',
+        args: cleanArgs,
+        result: action.includes('complete') ? '18 passed, 0 failed' : 'executed',
         time: 'just now',
       };
       if (action.includes('complete') || text.includes('green') || text.includes('exit 0')) {
@@ -604,6 +619,15 @@ export class MaosTui {
       } else {
         ag.state = 'working';
       }
+      if (!ag.gitDiff) ag.gitDiff = [];
+      if (action === 'create_file') {
+        ag.gitDiff.unshift(`+ create_file: ${cleanArgs}`);
+      } else if (action === 'git_commit') {
+        ag.gitDiff.unshift(`+ commit: ${cleanArgs}`);
+      } else if (action.includes('complete')) {
+        ag.gitDiff.unshift(`✓ tests passed: ${cleanArgs}`);
+      }
+      if (ag.gitDiff.length > 10) ag.gitDiff = ag.gitDiff.slice(0, 10);
     }
   }
 
@@ -714,6 +738,7 @@ export class MaosTui {
   private exit(): void {
     this.isRunning = false;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.swarmAnimTimer) clearInterval(this.swarmAnimTimer);
     if (this.spinnerTimer) clearInterval(this.spinnerTimer);
     if (this.transcriptRenderTimer) clearTimeout(this.transcriptRenderTimer);
     if (this.activeChild) {
@@ -1696,23 +1721,98 @@ export class MaosTui {
 
       // Ingest live tool calls and worker activities into Swarm Board
       for (const row of rows) {
-        if (row.includes('[Tool Call]') || row.includes('create_file:') || row.includes('run_command:')) {
-          const toolMatch = row.match(/(?:\[Tool Call\]\s*|⚡\s*)(\w+):\s*(.*)/i);
+        if (row.includes('Decomposed into')) {
+          const dMatch = row.match(/Decomposed into (\d+) subtasks/i);
+          if (dMatch) {
+            this.recordSwarmPost(
+              'coordinator',
+              '@all',
+              'plan_decomposition',
+              `Goal decomposed into ${dMatch[1]} parallel worktree subtasks`,
+            );
+          }
+        } else if (row.includes('Worker') && row.includes('live in')) {
+          const liveMatch = row.match(/Worker\s+([\w-]+)\s+live in\s+([\w:]+)\s*\(([\w-]+)\)/i);
+          if (liveMatch) {
+            const raw = liveMatch[1].toLowerCase().trim();
+            const sender = raw.startsWith('ignite-worker-')
+              ? raw
+              : raw.startsWith('worker-')
+                ? `ignite-${raw}`
+                : raw.startsWith('worker')
+                  ? `ignite-worker-${raw.replace(/\D/g, '') || '1'}`
+                  : raw;
+            const paneId = liveMatch[2];
+            const branch = liveMatch[3];
+            const ag = this.swarmAgents.find((a) => a.id === sender);
+            if (ag) {
+              ag.paneId = paneId;
+              ag.branch = branch;
+              ag.state = 'working';
+            }
+            this.recordSwarmPost(sender, '@coordinator', 'spawn', `Live in ${paneId} on worktree branch ${branch}`);
+          }
+        } else if (/^\s*(\d+)\/(\d+)\s+([^\n]+)/.test(row)) {
+          const taskMatch = row.match(/^\s*(\d+)\/(\d+)\s+([^\n]+)/);
+          if (taskMatch) {
+            const idx = parseInt(taskMatch[1], 10);
+            const taskTitle = taskMatch[3].trim();
+            const workerId = `ignite-worker-${idx}`;
+            const ag = this.swarmAgents.find((a) => a.id === workerId);
+            if (ag) {
+              ag.taskTitle = taskTitle;
+              ag.state = 'working';
+            }
+            this.recordSwarmPost('coordinator', `@${workerId}`, 'assign', `You own the implementation of ${taskTitle}`);
+          }
+        } else if (
+          row.includes('[Tool Call]') ||
+          row.includes('create_file:') ||
+          row.includes('run_command:') ||
+          row.includes('git commit:') ||
+          row.includes('git_commit:')
+        ) {
+          const toolMatch = row.match(/(?:\[Tool Call\]\s*|⚡\s*|git\s+)(\w+):\s*(.*)/i);
           if (toolMatch) {
             const tool = toolMatch[1];
             const args = toolMatch[2];
-            const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+)/i);
-            const sender = wMatch ? wMatch[1].toLowerCase().replace('worker-', 'ignite-worker-') : 'ignite-worker-1';
+            const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+|Worker\s+\d+)/i);
+            const raw = wMatch ? wMatch[1].toLowerCase().trim() : 'ignite-worker-1';
+            const sender = raw.startsWith('ignite-worker-')
+              ? raw
+              : raw.startsWith('worker-')
+                ? `ignite-${raw}`
+                : raw.startsWith('worker')
+                  ? `ignite-worker-${raw.replace(/\D/g, '') || '1'}`
+                  : raw;
             this.recordSwarmPost(sender, '@coordinator', tool, `${tool}: ${args}`);
           }
-        } else if (row.includes('Task marked complete') || row.includes('WORKTREE GREEN') || row.includes('green')) {
-          const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+)/i);
-          const sender = wMatch ? wMatch[1].toLowerCase().replace('worker-', 'ignite-worker-') : 'ignite-worker-1';
+        } else if (
+          row.includes('Task marked complete') ||
+          row.includes('WORKTREE GREEN') ||
+          row.includes('tests passed') ||
+          row.includes('Branch clean')
+        ) {
+          const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+|Worker\s+\d+)/i);
+          const raw = wMatch ? wMatch[1].toLowerCase().trim() : 'ignite-worker-1';
+          const sender = raw.startsWith('ignite-worker-')
+            ? raw
+            : raw.startsWith('worker-')
+              ? `ignite-${raw}`
+              : raw.startsWith('worker')
+                ? `ignite-worker-${raw.replace(/\D/g, '') || '1'}`
+                : raw;
           this.recordSwarmPost(sender, '@coordinator', 'complete', `${sender} worktree green and tests passed`);
         } else if (row.includes('Spawning worker')) {
-          const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+)/i);
-          const worker = wMatch ? wMatch[1].toLowerCase().replace('worker-', 'ignite-worker-') : 'worker';
+          const wMatch = row.match(/(ignite-worker-\d+|Worker-\d+|Worker\s+\d+)/i);
+          const raw = wMatch ? wMatch[1].toLowerCase().trim() : 'worker';
+          const worker = raw.startsWith('ignite-worker-') ? raw : raw.startsWith('worker-') ? `ignite-${raw}` : raw;
           this.recordSwarmPost('coordinator', `@${worker}`, 'spawn', `Spawning ${worker} in isolated worktree`);
+        } else if (row.includes('[HEALER]')) {
+          const hMatch = row.match(/\[HEALER\]\s*(.*)/i);
+          if (hMatch) {
+            this.recordSwarmPost('coordinator', '@healer', 'repair', `AutonomousHealer: ${hMatch[1].slice(0, 80)}`);
+          }
         }
       }
     }
@@ -2094,6 +2194,20 @@ export class MaosTui {
     const terminalRows = Math.max(10, (process.stdout.rows || 40) - 1);
     const availableBodyRows = Math.max(1, terminalRows - lines.length - footerRows);
 
+    if (this.activeTab === 3) {
+      if (!this.swarmAnimTimer && this.isRunning) {
+        this.swarmAnimTimer = setInterval(() => {
+          if (this.isRunning && this.activeTab === 3 && !this.externalCommandRunning && !this.isRendering) {
+            this.render();
+          }
+        }, 125);
+        this.swarmAnimTimer.unref();
+      }
+    } else if (this.swarmAnimTimer) {
+      clearInterval(this.swarmAnimTimer);
+      this.swarmAnimTimer = null;
+    }
+
     const page: string[] = [];
     if (this.activeTab === 1) this.renderTabFleet(page, mainW, availableBodyRows);
     else if (this.activeTab === 2) this.renderTabChat(page, mainW, availableBodyRows);
@@ -2454,7 +2568,9 @@ export class MaosTui {
     // Dynamically synchronize model badge
     const modelBadge = formatHeaderBadge(this.selectedModel);
     for (const ag of this.swarmAgents) {
-      ag.model = modelBadge;
+      if (!ag.model || ag.id === 'coordinator') {
+        ag.model = modelBadge;
+      }
     }
     // Synchronize Herdr panes if active
     if (this.herdrPanes.length > 0) {

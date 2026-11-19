@@ -16,6 +16,7 @@ import {
   createDefaultSwarmAgents,
   createDefaultSwarmPosts,
   renderSwarmBoard,
+  formatRosterModelBadge,
   SwarmBoardState,
   SwarmAgent,
   SwarmPost,
@@ -99,6 +100,10 @@ describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
       expect(mascot2).toHaveLength(8);
       for (const line of mascot1) {
         expect(line.length).toBeGreaterThan(0);
+        expect(terminalCellWidth(line)).toBe(20);
+      }
+      for (const line of mascot2) {
+        expect(terminalCellWidth(line)).toBe(20);
       }
     });
   });
@@ -186,15 +191,73 @@ describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
       expect(fullText).toContain('Diff:');
     });
 
-    it('renders expanded inspector when expanded=true', () => {
+    it('renders expanded inspector with Mathematical Moon Jellyfish frame when expanded=true', () => {
       mockState.expanded = true;
       const renderedLines = renderSwarmBoard(mockState, { width: 90 });
       const fullText = renderedLines.join('\n');
 
       expect(fullText).toContain('EXPANDED SWARM INSPECTOR');
+      expect(fullText).toContain('MOON JELLYFISH SWARM KERNEL');
       expect(fullText).toContain('WORKTREE GIT DIFF / VERIFICATION TRACE');
       expect(fullText).toContain('diff --git a/index.html');
       expect(fullText).toContain('<!DOCTYPE html>');
+    });
+
+    it('formats model badges correctly preserving version and parameter count', () => {
+      expect(formatRosterModelBadge('gemma2:9b')).toBe('GEMMA 9B');
+      expect(formatRosterModelBadge('GEMMA 2 9B · LOCAL')).toBe('GEMMA 9B');
+      expect(formatRosterModelBadge('gemma4:e2b')).toBe('GEMMA 4 2B');
+      expect(formatRosterModelBadge('GEMMA 4 E2B · LOCAL')).toBe('GEMMA 4 2B');
+      expect(formatRosterModelBadge('gemma2:2b')).toBe('GEMMA 2B');
+      expect(formatRosterModelBadge('Qwen/Qwen2.5-3B-Instruct')).toBe('QWEN 3B');
+      expect(formatRosterModelBadge('qwen2.5-coder:7b')).toBe('QWEN 7B');
+    });
+
+    it('renders distinct model badges in Roster column', () => {
+      const renderedLines = renderSwarmBoard(mockState, { width: 90 });
+      const fullText = renderedLines.join('\n');
+
+      expect(fullText).toContain('[GEMMA 9B]');
+      expect(fullText).toContain('[GEMMA 4 2B]');
+      expect(fullText).toContain('[GEMMA 2B]');
+    });
+
+    it('strictly complies with terminal width without line overflows for various widths', () => {
+      for (const w of [50, 60, 80, 100, 120]) {
+        const normalLines = renderSwarmBoard(mockState, { width: w });
+        for (const line of normalLines) {
+          expect(terminalCellWidth(line)).toBeLessThanOrEqual(w);
+        }
+
+        const expLines = renderSwarmBoard({ ...mockState, expanded: true }, { width: w });
+        for (const line of expLines) {
+          expect(terminalCellWidth(line)).toBeLessThanOrEqual(w);
+        }
+      }
+    });
+
+    it('resiliently handles edge cases: empty agents, undefined posts, undefined goal', () => {
+      const emptyState: SwarmBoardState = {
+        goal: '',
+        status: 'waiting',
+        agents: [],
+        posts: [],
+        selectedAgentIndex: -1,
+        model: 'gemma2:9b',
+      };
+      const lines = renderSwarmBoard(emptyState, { width: 80 });
+      expect(lines.length).toBeGreaterThan(0);
+
+      const nullState = {
+        goal: undefined as any,
+        status: 'done' as const,
+        agents: null as any,
+        posts: null as any,
+        selectedAgentIndex: NaN,
+        model: undefined as any,
+      };
+      const lines2 = renderSwarmBoard(nullState, { width: 80 });
+      expect(lines2.length).toBeGreaterThan(0);
     });
   });
 
@@ -302,6 +365,31 @@ describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
       } finally {
         consoleSpy.mockRestore();
       }
+    });
+    it('ingests live ignite command stream: subtasks, worker spawn, tool calls, and green tests', () => {
+      const tui = new MaosTui(tmpDir);
+      const initialPosts = tui.getSwarmPosts().length;
+
+      // Simulate decomposition
+      (tui as any).appendCommandOutput('Decomposed into 4 subtasks (gemma2:9b)\n');
+      // Simulate subtask assignment
+      (tui as any).appendCommandOutput('  1/4  HTML & 3D Spatial Viewport\n');
+      // Simulate worker spawning
+      (tui as any).appendCommandOutput('Worker ignite-worker-1 live in w0:p1 (maos-ignite-0)\n');
+      // Simulate tool call
+      (tui as any).appendCommandOutput('[Tool Call] create_file: index.html for ignite-worker-1\n');
+      // Simulate branch green / tests passed
+      (tui as any).appendCommandOutput('Worker ignite-worker-1 Task marked complete, tests passed\n');
+
+      const posts = tui.getSwarmPosts();
+      expect(posts.length).toBeGreaterThan(initialPosts);
+
+      const worker1 = tui.getSwarmAgents().find((a) => a.id === 'ignite-worker-1');
+      expect(worker1).toBeDefined();
+      expect(worker1?.state).toBe('done');
+      expect(worker1?.paneId).toBe('w0:p1');
+      expect(worker1?.branch).toBe('maos-ignite-0');
+      expect(worker1?.gitDiff && worker1.gitDiff.length > 0).toBe(true);
     });
   });
 });
