@@ -80,9 +80,118 @@ export const palette = {
 };
 
 /**
+ * Generates an uncolored raw compact moon jelly ASCII frame (e.g. 20x8)
+ * maintaining authentic mathematical moon jelly geometry:
+ * - 3-row arched bell dome with curved crown and inner horseshoe luminescence (* / #)
+ * - Signature wavy rim margin ('~'~'~'~') modulating with stroke squeeze
+ * - 4 spaced trailing tentacles that undulate with wave lag, bowing with ( ) / \ |
+ * - 2 central frilled oral mouth arms with ';'
+ * - Fading tips with ':' and '.'
+ */
+export function generateCompactJellyfishRawFrame(t: number = 0, cols: number = 20, rows: number = 8): string {
+  const c = squeeze(t);
+  const cx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
+
+  const rimRow = Math.max(2, Math.floor(rows * 0.45));
+  const domeRows = rimRow;
+  const half = (cols * 0.38 - 1.8 * c) * (1 - 0.15 * c);
+
+  // Bell dome rows: 0 to rimRow - 1
+  for (let r = 0; r < domeRows; r++) {
+    const s = (domeRows - r - 0.5) / domeRows; // 1 at top, ~0 near rim
+    const w = Math.max(2, Math.round(half * Math.sqrt(Math.max(0.1, 1 - s * s * 0.8))));
+    const left = Math.round(cx - w);
+    const right = Math.round(cx + w);
+    for (let x = left; x <= right; x++) {
+      if (x >= 0 && x < cols) {
+        if (r === 0) {
+          grid[r][x] = x === left || x === right ? '.' : '-';
+        } else if (r === domeRows - 1) {
+          if (x === left) grid[r][x] = '(';
+          else if (x === right) grid[r][x] = ')';
+          else {
+            const u = (x - cx) / w;
+            const g = Math.abs(Math.abs(u) - 0.55);
+            if (g < 0.18) grid[r][x] = c > 0.5 ? '*' : '+';
+            else if (Math.abs(u) < 0.22) grid[r][x] = ':';
+            else grid[r][x] = '=';
+          }
+        } else {
+          if (x === left || x === right) grid[r][x] = '_';
+          else {
+            const u = (x - cx) / w;
+            const g = Math.abs(Math.abs(u) - 0.52);
+            grid[r][x] = g < 0.18 ? (c > 0.6 ? '#' : '*') : ':';
+          }
+        }
+      }
+    }
+  }
+
+  // Rim Row (signature wavy moon jelly rim margin)
+  const rimW = Math.max(3, Math.round(half + 0.5));
+  const rimLeft = Math.round(cx - rimW);
+  const rimRight = Math.round(cx + rimW);
+  for (let x = rimLeft; x <= rimRight; x++) {
+    if (x >= 0 && x < cols) {
+      grid[rimRow][x] = x === rimLeft || x === rimRight ? "'" : (x - rimLeft) % 2 === 1 ? '~' : "'";
+    }
+  }
+
+  // 4 Spaced Trailing Tentacles (outer left, inner left, inner right, outer right)
+  const tentU = [-0.85, -0.42, 0.42, 0.85];
+  for (let i = 0; i < tentU.length; i++) {
+    const u = tentU[i];
+    let prevX = cx + u * half;
+    for (let y = rimRow + 1; y < rows; y++) {
+      const d = y - rimRow;
+      const lagT = t - d * 0.08;
+      const lagC = squeeze(lagT);
+      const lagHalf = (cols * 0.38 - 1.8 * lagC) * (1 - 0.15 * lagC);
+      const lagCx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const wob = Math.sin(d * 0.7 - t * 3.0 + i * 1.5);
+      const curX = Math.round(lagCx + u * lagHalf + (0.15 + d * 0.08) * wob);
+      const dx = curX - prevX;
+      prevX = curX;
+      if (curX >= 0 && curX < cols) {
+        let ch = '|';
+        if (d >= rows - rimRow - 1) ch = ':';
+        else if (dx > 0.4) ch = '\\';
+        else if (dx < -0.4) ch = '/';
+        else if (wob > 0.25) ch = ')';
+        else if (wob < -0.25) ch = '(';
+        grid[y][curX] = ch;
+      }
+    }
+  }
+
+  // 2 Central Frilled Oral Mouth Arms with ';'
+  for (let i = 0; i < 2; i++) {
+    const s = i === 0 ? -1 : 1;
+    for (let y = rimRow + 1; y < rows; y++) {
+      const d = y - rimRow;
+      const lagT = t - d * 0.1;
+      const lagCx = cols / 2 + 0.8 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const tw = Math.sin(d * 0.9 - t * 2.5 + i * 2.0);
+      const curX = Math.round(lagCx + s * (1.2 - d * 0.15) + 0.6 * tw);
+      if (curX >= 0 && curX < cols) {
+        grid[y][curX] = d >= rows - rimRow - 1 ? ':' : ';';
+      }
+    }
+  }
+
+  return grid.map((r) => r.join('')).join('\n');
+}
+
+/**
  * Generates an uncolored raw mathematical ASCII frame (cols x rows) at time t.
  */
 export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.cols, rows: number = meta.rows): string {
+  if (cols < 36 || rows < 20) {
+    return generateCompactJellyfishRawFrame(t, cols, rows);
+  }
+
   let seed = 7;
   const rnd = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -263,7 +372,7 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
  */
 export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number): string {
   if (ch === ' ') return ' ';
-  if (ch === '·' || (ch === '.' && (rowIndex > rimRow + 7 || rowIndex < 2))) {
+  if (ch === '·') {
     return palette.slateMuted(ch); // Drifting plankton specks
   }
   if (ch === '~' || ch === "'") {
@@ -273,6 +382,10 @@ export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number)
     return palette.emerald(ch); // Oral mouth arms
   }
   if (rowIndex <= rimRow) {
+    // Open water specks above bell in 44x26
+    if (ch === '.' && rowIndex < 2 && rimRow > 5) {
+      return palette.slateMuted(ch);
+    }
     // Bell body
     if (['@', '%', '#', '*'].includes(ch)) {
       return palette.cyanBright(ch); // Inner horseshoe luminescence
@@ -285,6 +398,9 @@ export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number)
   // Tentacles trailing behind
   if (['|', '/', '\\', '(', ')'].includes(ch)) {
     return palette.cyanBright(ch);
+  }
+  if ([':', '.'].includes(ch)) {
+    return palette.slateMuted(ch); // Fading tentacle tips and drifting specks
   }
   return palette.cyan(ch);
 }
@@ -313,9 +429,12 @@ export function renderColoredJellyfish(t: number = 0, cols: number = meta.cols, 
  * trailing tentacles, and cyberpunk luminescence.
  */
 export function renderJellyfishMascot(t: number = 0, cols: number = 20, rows: number = 8): string[] {
-  const rawText = generateJellyfishRawFrame(t, cols, rows);
+  const rawText =
+    cols >= meta.cols && rows >= meta.rows
+      ? generateJellyfishRawFrame(t, cols, rows)
+      : generateCompactJellyfishRawFrame(t, cols, rows);
   const rawLines = rawText.split('\n');
-  const rimRow = Math.floor(rimAt(t, cols, rows).y);
+  const rimRow = Math.max(2, Math.floor(rows * 0.45));
 
   return rawLines.map((line, r) => {
     let colored = '';
