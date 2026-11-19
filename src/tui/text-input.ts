@@ -12,9 +12,22 @@ import chalk from 'chalk';
 
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-export function terminalCellWidth(str: string): number {
+export function terminalCellWidth(str: string | undefined | null): number {
   if (!str) return 0;
-  const stripped = str.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '');
+  const stripped = String(str).replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '');
+  if (!stripped) return 0;
+
+  // Fast path: pure printable ASCII (0x20 to 0x7e) characters have width 1
+  let isAscii = true;
+  for (let i = 0; i < stripped.length; i++) {
+    const code = stripped.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) {
+      isAscii = false;
+      break;
+    }
+  }
+  if (isAscii) return stripped.length;
+
   let width = 0;
   for (const { segment } of GRAPHEME_SEGMENTER.segment(stripped)) {
     const points = Array.from(segment, (c) => c.codePointAt(0)!);
@@ -52,6 +65,7 @@ export function terminalCellWidth(str: string): number {
 export class TextInputState {
   private text: string = '';
   private cursorPos: number = 0;
+  private lastKilledText: string = '';
 
   constructor(initialText: string = '') {
     this.setText(initialText, true);
@@ -63,6 +77,10 @@ export class TextInputState {
 
   public getCursor(): number {
     return this.cursorPos;
+  }
+
+  public getLastKilledText(): string {
+    return this.lastKilledText;
   }
 
   public setText(val: string, cursorAtEnd: boolean = true): void {
@@ -79,11 +97,20 @@ export class TextInputState {
    */
   public insert(str: string): void {
     if (!str) return;
-    const clean = str.replace(/\r\n/g, ' ').replace(/[\r\n]/g, ' ');
+    const clean = str.replace(/\r\n/g, ' ').replace(/[\r\n\t]/g, ' ');
     const before = this.text.slice(0, this.cursorPos);
     const after = this.text.slice(this.cursorPos);
     this.text = before + clean + after;
     this.cursorPos += clean.length;
+  }
+
+  /**
+   * Pastes/yanks previously deleted text at cursor (Ctrl+Y).
+   */
+  public yank(): boolean {
+    if (!this.lastKilledText) return false;
+    this.insert(this.lastKilledText);
+    return true;
   }
 
   /**
@@ -186,13 +213,14 @@ export class TextInputState {
   }
 
   /**
-   * Deletes the word immediately before the cursor (Ctrl+W).
+   * Deletes the word immediately before the cursor (Ctrl+W / Alt+Backspace).
    */
   public deleteWordBackward(): boolean {
     if (this.cursorPos <= 0) return false;
     let pos = this.cursorPos;
     while (pos > 0 && /\s/.test(this.text[pos - 1])) pos--;
     while (pos > 0 && !/\s/.test(this.text[pos - 1])) pos--;
+    this.lastKilledText = this.text.slice(pos, this.cursorPos);
     const before = this.text.slice(0, pos);
     const after = this.text.slice(this.cursorPos);
     this.text = before + after;
@@ -201,16 +229,21 @@ export class TextInputState {
   }
 
   public clearLine(): void {
+    if (this.text) this.lastKilledText = this.text;
     this.text = '';
     this.cursorPos = 0;
   }
 
   public clearToStart(): void {
+    if (this.cursorPos <= 0) return;
+    this.lastKilledText = this.text.slice(0, this.cursorPos);
     this.text = this.text.slice(this.cursorPos);
     this.cursorPos = 0;
   }
 
   public clearToEnd(): void {
+    if (this.cursorPos >= this.text.length) return;
+    this.lastKilledText = this.text.slice(this.cursorPos);
     this.text = this.text.slice(0, this.cursorPos);
   }
 }

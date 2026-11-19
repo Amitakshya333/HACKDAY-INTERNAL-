@@ -83,12 +83,28 @@ const MAOS_OASIS_LOGO_ROWS = [
 ];
 const MAOS_OASIS_LOGO_WIDTH = Math.max(...MAOS_OASIS_LOGO_ROWS.map(terminalCellWidth));
 
-function terminalCellWidth(value: string): number {
+function terminalCellWidth(value: string | undefined | null): number {
+  if (!value) return 0;
+  const plainText = String(value)
+    .replace(ANSI_SEQUENCE, '')
+    .replace(/[\r\n]+/g, '');
+  if (!plainText) return 0;
+
+  // Fast path: pure ASCII characters 0x20 through 0x7e have cell width 1
+  let isAscii = true;
+  for (let i = 0; i < plainText.length; i++) {
+    const code = plainText.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) {
+      isAscii = false;
+      break;
+    }
+  }
+  if (isAscii) return plainText.length;
+
   let width = 0;
-  const plainText = value.replace(ANSI_SEQUENCE, '').replace(/[\r\n]+/g, '');
   for (const { segment } of GRAPHEME_SEGMENTER.segment(plainText)) {
     const points = Array.from(segment, (character) => character.codePointAt(0) || 0);
-    const point = points.find((value) => value !== 0x200d && !(value >= 0xfe00 && value <= 0xfe0f)) || 0;
+    const point = points.find((val) => val !== 0x200d && !(val >= 0xfe00 && val <= 0xfe0f)) || 0;
     const wide =
       point >= 0x1100 &&
       (point <= 0x115f ||
@@ -107,7 +123,7 @@ function terminalCellWidth(value: string): number {
     const emojiPresentation =
       (hasVS16 && point !== 0x2713 && point !== 0x2714) ||
       points.includes(0x20e3) ||
-      points.filter((value) => value >= 0x1f1e6 && value <= 0x1f1ff).length === 2 ||
+      points.filter((v) => v >= 0x1f1e6 && v <= 0x1f1ff).length === 2 ||
       (point >= 0x1f300 && point <= 0x1faff) ||
       [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(
         point,
@@ -119,12 +135,18 @@ function terminalCellWidth(value: string): number {
   return width;
 }
 
-function fitTerminalLine(value: string, width: number): string {
+function fitTerminalLine(value: string | undefined | null, width: number): string {
   if (width <= 0) return '';
-  const cleanValue = value.replace(/[\r\n]+/g, ' ');
+  const cleanValue = value == null ? '' : String(value).replace(/[\r\n]+/g, ' ');
   const fullWidth = terminalCellWidth(cleanValue);
-  const clipped = fullWidth > width;
-  const limit = clipped ? Math.max(0, width - 1) : width;
+
+  // Fast path: if the text already fits comfortably, return immediately
+  if (fullWidth <= width) {
+    const reset = cleanValue.includes('\u001b') ? '\u001b[0m' : '';
+    return cleanValue + reset + ' '.repeat(width - fullWidth);
+  }
+
+  const limit = Math.max(0, width - 1);
   let used = 0;
   let output = '';
   const tokens = cleanValue.match(/\u001b\[[0-?]*[ -/]*[@-~]|[^\u001b]+|\u001b/gu) || [];
@@ -144,11 +166,9 @@ function fitTerminalLine(value: string, width: number): string {
     }
   }
 
-  if (clipped) {
-    if (used < width) {
-      output += '…';
-      used += 1;
-    }
+  if (used < width) {
+    output += '…';
+    used += 1;
   }
   if (cleanValue.includes('\u001b')) output += '\u001b[0m';
   return output + ' '.repeat(Math.max(0, width - used));
@@ -1006,8 +1026,8 @@ export class MaosTui {
 
       // ── MOUSE AND ANSI ESCAPE SEQUENCE FILTER ────────────────────────────
       // SGR Extended Mouse Mode: \x1b[<button;col;rowM (press) or \x1b[<button;col;rowm (release)
-      // Also handles stripped headers or coordinate fragments like <64;35;12M or 64;35;12M
-      const sgrMouseMatch = str ? str.match(/(?:\x1b\[|\[)?<?(\d+);(\d+);(\d+)([Mm])/i) : null;
+      // Also handles stripped headers or coordinate fragments like <64;35;12M
+      const sgrMouseMatch = str ? str.match(/^(?:\x1b\[<|\[<|<|\x1b\[)?(\d+);(\d+);(\d+)([Mm])$/i) : null;
       if (sgrMouseMatch) {
         const btn = parseInt(sgrMouseMatch[1], 10);
         // Mouse Wheel Vertical Scrolling (buttons 64, 66, 68, 72, 80 = up, 65, 67, 69, 73, 81 = down)
@@ -1273,7 +1293,7 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (key.name === 'delete') {
+        if (key.name === 'delete' || (key.ctrl && key.name === 'd') || str === '\x04') {
           this.modalInput.deleteForward();
           this.render();
           return;
@@ -1283,7 +1303,13 @@ export class MaosTui {
           this.render();
           return;
         }
-        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+        if (
+          (key.ctrl && key.name === 'w') ||
+          (key.meta && key.name === 'backspace') ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08'
+        ) {
           this.modalInput.deleteWordBackward();
           this.render();
           return;
@@ -1298,13 +1324,18 @@ export class MaosTui {
           this.render();
           return;
         }
+        if ((key.ctrl && key.name === 'y') || str === '\x19') {
+          this.modalInput.yank();
+          this.render();
+          return;
+        }
         const isPrintable =
           str &&
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
-          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
-          !/^[<\[;]\d+/.test(str) &&
+          !/^\[?<?\d+;\d+;\d+[Mm]$/i.test(str) &&
+          !/^\d+;\d+;\d+[Mm]$/i.test(str) &&
           !/[\x00-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInput.insert(str);
@@ -1392,7 +1423,7 @@ export class MaosTui {
             return;
           }
         }
-        if (key.name === 'delete') {
+        if (key.name === 'delete' || (key.ctrl && key.name === 'd') || str === '\x04') {
           this.modalInput.deleteForward();
           this.render();
           return;
@@ -1402,7 +1433,13 @@ export class MaosTui {
           this.render();
           return;
         }
-        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+        if (
+          (key.ctrl && key.name === 'w') ||
+          (key.meta && key.name === 'backspace') ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08'
+        ) {
           this.modalInput.deleteWordBackward();
           this.render();
           return;
@@ -1414,6 +1451,11 @@ export class MaosTui {
         }
         if ((key.ctrl && key.name === 'k') || str === '\x0b') {
           this.modalInput.clearToEnd();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'y') || str === '\x19') {
+          this.modalInput.yank();
           this.render();
           return;
         }
@@ -1478,8 +1520,8 @@ export class MaosTui {
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
-          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
-          !/^[<\[;]\d+/.test(str) &&
+          !/^\[?<?\d+;\d+;\d+[Mm]$/i.test(str) &&
+          !/^\d+;\d+;\d+[Mm]$/i.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInput.insert(str);
@@ -1555,7 +1597,7 @@ export class MaosTui {
             return;
           }
         }
-        if (key.name === 'delete') {
+        if (key.name === 'delete' || (key.ctrl && key.name === 'd') || str === '\x04') {
           this.chatInput.deleteForward();
           this.render();
           return;
@@ -1565,7 +1607,13 @@ export class MaosTui {
           this.render();
           return;
         }
-        if ((key.ctrl && key.name === 'w') || str === '\x17') {
+        if (
+          (key.ctrl && key.name === 'w') ||
+          (key.meta && key.name === 'backspace') ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08'
+        ) {
           this.chatInput.deleteWordBackward();
           this.render();
           return;
@@ -1577,6 +1625,11 @@ export class MaosTui {
         }
         if ((key.ctrl && key.name === 'k') || str === '\x0b') {
           this.chatInput.clearToEnd();
+          this.render();
+          return;
+        }
+        if ((key.ctrl && key.name === 'y') || str === '\x19') {
+          this.chatInput.yank();
           this.render();
           return;
         }
@@ -1611,8 +1664,8 @@ export class MaosTui {
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
-          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
-          !/^[<\[;]\d+/.test(str) &&
+          !/^\[?<?\d+;\d+;\d+[Mm]$/i.test(str) &&
+          !/^\d+;\d+;\d+[Mm]$/i.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.chatInput.insert(str);
@@ -3165,7 +3218,7 @@ export class MaosTui {
 
       lines.push(c.slateBorder('─'.repeat(W)));
       const innerW = Math.max(0, W - 4);
-      const prefix = `${c.cyanBright('❯')} ${c.slateBorder('│')}  `;
+      const prefix = `${c.cyanBright('❯')}  `;
       const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix));
       const commandText = this.externalCommandRunning
         ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white(`${this.externalCommandLabel || 'Running'}...`)} ${c.slateMuted('(Ctrl+C to abort · Tab to switch view)')}`
@@ -3209,7 +3262,7 @@ export class MaosTui {
     lines.push('');
     lines.push('');
     const promptInnerW = promptW - 4;
-    const prefix = `${c.cyanBright('❯')} ${c.slateBorder('│')}  `;
+    const prefix = `${c.cyanBright('❯')}  `;
     const inputWidth = Math.max(0, promptInnerW - terminalCellWidth(prefix));
     const commandText = this.externalCommandRunning
       ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white(`${this.externalCommandLabel || 'Running'}...`)} ${c.slateMuted('(Ctrl+C to abort · Tab to switch view)')}`
@@ -3341,7 +3394,7 @@ export class MaosTui {
 
     // Inline Chat Prompt Box
     const innerW = Math.max(0, W - 4);
-    const prefix = `${c.violetBright('❯')} ${c.slateBorder('│')}  `;
+    const prefix = `${c.violetBright('❯')}  `;
     const inputWidth = Math.max(0, innerW - terminalCellWidth(prefix));
     const inputText = this.chatIsStreaming
       ? `${c.cyanBright(this.spinnerFrames[this.spinnerIndex % this.spinnerFrames.length])} ${c.white('Generating response...')} ${c.slateMuted('(Loopback inference)')}`

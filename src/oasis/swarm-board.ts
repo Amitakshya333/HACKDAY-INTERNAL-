@@ -28,8 +28,21 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'graphem
 export function terminalCellWidth(value: string | undefined | null): number {
   if (value == null) return 0;
   const str = String(value);
-  let width = 0;
   const plainText = str.replace(ANSI_SEQUENCE, '').replace(/[\r\n]+/g, '');
+  if (!plainText) return 0;
+
+  // Fast path: pure ASCII characters 0x20 through 0x7e have cell width 1
+  let isAscii = true;
+  for (let i = 0; i < plainText.length; i++) {
+    const code = plainText.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) {
+      isAscii = false;
+      break;
+    }
+  }
+  if (isAscii) return plainText.length;
+
+  let width = 0;
   for (const { segment } of GRAPHEME_SEGMENTER.segment(plainText)) {
     const points = Array.from(segment, (char) => char.codePointAt(0) || 0);
     const point = points.find((v) => v !== 0x200d && !(v >= 0xfe00 && v <= 0xfe0f)) || 0;
@@ -68,8 +81,14 @@ export function fitTerminalLine(value: string | undefined | null, width: number)
   const str = value == null ? '' : String(value);
   const cleanValue = str.replace(/[\r\n]+/g, ' ');
   const fullWidth = terminalCellWidth(cleanValue);
-  const clipped = fullWidth > width;
-  const limit = clipped ? Math.max(0, width - 1) : width;
+
+  // Instant fast path when line fits comfortably
+  if (fullWidth <= width) {
+    const reset = cleanValue.includes('\u001b') ? '\u001b[0m' : '';
+    return cleanValue + reset + ' '.repeat(width - fullWidth);
+  }
+
+  const limit = Math.max(0, width - 1);
   let used = 0;
   let output = '';
   const tokens = cleanValue.match(/\u001b\[[0-?]*[ -/]*[@-~]|[^\u001b]+|\u001b/gu) || [];
@@ -87,11 +106,9 @@ export function fitTerminalLine(value: string | undefined | null, width: number)
     }
   }
 
-  if (clipped) {
-    if (used < width) {
-      output += '…';
-      used += 1;
-    }
+  if (used < width) {
+    output += '…';
+    used += 1;
   }
   if (cleanValue.includes('\u001b')) output += '\u001b[0m';
   return output + ' '.repeat(Math.max(0, width - used));

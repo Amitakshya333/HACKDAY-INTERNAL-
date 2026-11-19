@@ -154,4 +154,43 @@ describe('TextInputState & Cursor Navigation Suite', () => {
     expect(rendered).toContain('…');
     expect(rendered).toContain('█');
   });
+
+  it('supports kill and yank (Ctrl+Y) restoring deleted text', () => {
+    const input = new TextInputState('git push origin main');
+    input.deleteWordBackward(); // deletes 'main'
+    expect(input.getText()).toBe('git push origin ');
+    expect(input.getLastKilledText()).toBe('main');
+
+    input.yank();
+    expect(input.getText()).toBe('git push origin main');
+  });
+
+  it('supports clearToStart and clearToEnd with kill storage', () => {
+    const input = new TextInputState('alpha beta gamma');
+    input.setCursor(6); // at 'beta'
+    input.clearToEnd();
+    expect(input.getText()).toBe('alpha ');
+    expect(input.getLastKilledText()).toBe('beta gamma');
+
+    input.setText('first second third');
+    input.setCursor(6); // at 'second'
+    input.clearToStart();
+    expect(input.getText()).toBe('second third');
+    expect(input.getLastKilledText()).toBe('first ');
+  });
+
+  it('correctly accepts code snippets, arrays, comparisons, and numbers without dropping', () => {
+    const input = new TextInputState();
+    input.insert('arr[0] = 42;');
+    expect(input.getText()).toBe('arr[0] = 42;');
+
+    input.insert(' if (x < 10) { doTask(1, 2); }');
+    expect(input.getText()).toBe('arr[0] = 42; if (x < 10) { doTask(1, 2); }');
+  });
+
+  it('calculates pure ASCII cell width instantly using fast path', () => {
+    expect(terminalCellWidth('simple ascii text')).toBe(17);
+    expect(terminalCellWidth('[0, 1, 2] <tag>;')).toBe(16);
+    expect(terminalCellWidth('\u001b[38;2;255;255;255mhello\u001b[0m')).toBe(5);
+  });
 });
