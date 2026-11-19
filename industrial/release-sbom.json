@@ -12,8 +12,8 @@
       "name": "MAOS Orchestrator CLI",
       "version": "0.4.0",
       "relativePath": "dist/cli/index.js",
-      "sha256": "d00a6898969ef8e3e9a4c4e77978ed22d8ad5ebb6436735f0f725db2c9d01cf4",
-      "size": 47869,
+      "sha256": "7c4be3968546bdc82ce9a36b77ad8ce6cbf4f91ef7be2cca9046026e7b66045a",
+      "size": 48751,
       "license": "MIT",
       "isExecutable": true,
       "isRemote": false
@@ -60,8 +60,8 @@
       "name": "MAOS Rust Industrial Authority Engine",
       "version": "0.1.0",
       "relativePath": "rust/target/release/maos-engine.exe",
-      "sha256": "d11c861b125dce1ddd2506dffa3ad1b758a6015f8b187f3be8f4af301a5f5f29",
-      "size": 472064,
+      "sha256": "d6ec4b46db568e3d29028bab261c580b60b01dbf0c64e41ee6b38f08e4f07d6c",
+      "size": 462336,
       "license": "MIT OR Apache-2.0",
       "isExecutable": true,
       "isRemote": false
@@ -247,5 +247,5 @@
       "isRemote": false
     }
   },
-  "entriesHash": "4e6af7efaa6c3daa21ba1475718842b3e2165d78c033a7a8c5844b9e0230c288"
+  "entriesHash": "fe8064aac7d5ec55698c78dbda34e2a305e086c494d558b680d64d919c507516"
 }
