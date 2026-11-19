@@ -715,9 +715,9 @@ export class MaosTui {
 
   public start(): void {
     // Switch to alternate screen buffer, clear screen, hide cursor & explicitly disable mouse reporting.
-    // Disabling DEC modes 1000, 1001, 1002, 1003, 1005, 1006, 1015 prevents trackpad scroll gestures from sending escape bursts to stdin
+    // Disabling DEC modes 1000-1007, 1015, 1016 prevents trackpad scroll gestures from sending escape bursts to stdin
     process.stdout.write(
-      '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l',
+      '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l',
     );
 
     this.setupKeyboard();
@@ -800,7 +800,7 @@ export class MaosTui {
     this.cleanupKeyboard();
     // Restore normal screen buffer, disable mouse reporting, reveal cursor
     process.stdout.write(
-      '\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1049l\x1b[?25h',
+      '\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l\x1b[?1049l\x1b[?25h',
     );
     console.log(c.cyanBright('✦ MAOS Oasis TUI closed. Returning to terminal.'));
     process.exit(0);
@@ -825,59 +825,111 @@ export class MaosTui {
       const origEmit = process.stdin.emit.bind(process.stdin);
       this.origStdinEmit = origEmit;
 
-      const MOUSE_SEQ_REGEX = /\x1b\[(?:<(?:\d+);(?:\d+);(?:\d+)[Mm]|M[\s\S]{3}|(?:\d+);(?:\d+);(?:\d+)M)/g;
-      const DANGLING_MOUSE_REGEX = /(?:<|\[<)?\d+;\d+;\d+[Mm]/g;
-      const PARTIAL_MOUSE_REGEX = /\x1b\[(?:<[\d;]*|M[\s\S]{0,2})$/;
+      const SGR_MOUSE_REGEX = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+      const X10_MOUSE_REGEX = /\x1b\[M([\s\S]{3})/g;
+      const URXVT_MOUSE_REGEX = /\x1b\[(\d+);(\d+);(\d+)([Mm])/g;
+      const FOCUS_REGEX = /\x1b\[[IO]/g;
+      const PASTE_REGEX = /\x1b\[20[01]~/g;
+      const DANGLING_MOUSE_REGEX = /(?:\[?<|<)\d+(?:;\d+)*[Mm]/gi;
+      const DANGLING_SEMI_REGEX = /(?:^|[;\s])\d+(?:;\d+)+[Mm](?=[;\s]|$)/gi;
 
-      const flushPending = () => {
+      const PARTIAL_SGR_MOUSE_REGEX = /\x1b\[<[\d;]*$/;
+      const PARTIAL_X10_MOUSE_REGEX = /\x1b\[M[\s\S]{0,2}$/;
+      const PARTIAL_URXVT_REGEX = /\x1b\[(?:\d+;)*\d*$/;
+      const PARTIAL_ESC_REGEX = /\x1b$/;
+
+      const clearTimer = () => {
         if (this.rawStdinFlushTimer) {
           clearTimeout(this.rawStdinFlushTimer);
           this.rawStdinFlushTimer = null;
         }
-        if (this.rawStdinBuffer) {
-          const toSend = this.rawStdinBuffer;
+      };
+
+      const onEscapeTimeout = () => {
+        clearTimer();
+        if (!this.rawStdinBuffer) return;
+
+        // If the pending buffer is an incomplete mouse sequence:
+        // NEVER emit it to readline! Incomplete mouse sequences (e.g. \x1b[<64;10;)
+        // are NEVER valid user typing and will corrupt the active input box.
+        if (PARTIAL_SGR_MOUSE_REGEX.test(this.rawStdinBuffer) || PARTIAL_X10_MOUSE_REGEX.test(this.rawStdinBuffer)) {
           this.rawStdinBuffer = '';
-          origEmit('data', toSend);
+          return;
         }
+
+        // If it's a standalone ESC or CSI (e.g. user pressed Escape key):
+        const toSend = this.rawStdinBuffer;
+        this.rawStdinBuffer = '';
+        origEmit('data', toSend);
       };
 
       process.stdin.emit = (event: string | symbol, ...args: any[]): boolean => {
         if (event === 'data' && args[0] !== undefined) {
-          if (this.rawStdinFlushTimer) {
-            clearTimeout(this.rawStdinFlushTimer);
-            this.rawStdinFlushTimer = null;
-          }
+          clearTimer();
           const chunkStr = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
           this.rawStdinBuffer += chunkStr;
 
-          // Strip complete SGR and X10 mouse sequences and map wheel scrolling
-          this.rawStdinBuffer = this.rawStdinBuffer.replace(MOUSE_SEQ_REGEX, (match) => {
-            const wheelMatch = match.match(/<(\d+);/);
-            if (wheelMatch) {
-              const btn = parseInt(wheelMatch[1], 10);
-              if (btn === 64 || btn === 66) {
-                this.scrollUpCurrentView(3);
-              } else if (btn === 65 || btn === 67) {
-                this.scrollDownCurrentView(3);
-              }
-            } else if (match.startsWith('\x1b[M\x60')) {
+          // Strip focus and bracketed paste reporting
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(FOCUS_REGEX, '');
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(PASTE_REGEX, '');
+
+          // Strip complete SGR mouse sequences and process wheel events
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(SGR_MOUSE_REGEX, (_match, btnStr) => {
+            const btn = parseInt(btnStr, 10);
+            if (btn === 64 || btn === 66 || btn === 68 || btn === 72 || btn === 80) {
               this.scrollUpCurrentView(3);
-            } else if (match.startsWith('\x1b[M\x61')) {
+            } else if (btn === 65 || btn === 67 || btn === 69 || btn === 73 || btn === 81) {
               this.scrollDownCurrentView(3);
             }
             return '';
           });
 
-          // Strip any dangling coordinate sequences if escape header was cut or dropped
-          this.rawStdinBuffer = this.rawStdinBuffer.replace(DANGLING_MOUSE_REGEX, '');
+          // Strip complete X10 mouse sequences and process wheel events
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(X10_MOUSE_REGEX, (_match, bytes) => {
+            if (bytes.length >= 1) {
+              const code = bytes.charCodeAt(0);
+              if (code === 0x60 || code === 0x62) {
+                this.scrollUpCurrentView(3);
+              } else if (code === 0x61 || code === 0x63) {
+                this.scrollDownCurrentView(3);
+              }
+            }
+            return '';
+          });
 
-          // Check if buffer ends with an incomplete mouse sequence header (e.g. \x1b[<64;, \x1b[M)
-          const partialMatch = this.rawStdinBuffer.match(PARTIAL_MOUSE_REGEX);
+          // Strip complete URXVT mouse sequences
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(URXVT_MOUSE_REGEX, (_match, btnStr) => {
+            const btn = parseInt(btnStr, 10);
+            if (btn === 64 || btn === 66) {
+              this.scrollUpCurrentView(3);
+            } else if (btn === 65 || btn === 67) {
+              this.scrollDownCurrentView(3);
+            }
+            return '';
+          });
+
+          // Strip any dangling severed mouse fragments
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(DANGLING_MOUSE_REGEX, '');
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(DANGLING_SEMI_REGEX, '');
+
+          // Check if buffer ends with an incomplete sequence
+          const sgrPartial = this.rawStdinBuffer.match(PARTIAL_SGR_MOUSE_REGEX);
+          const x10Partial = this.rawStdinBuffer.match(PARTIAL_X10_MOUSE_REGEX);
+          const urxvtOrCsiPartial = this.rawStdinBuffer.match(PARTIAL_URXVT_REGEX);
+          const escPartial = this.rawStdinBuffer.match(PARTIAL_ESC_REGEX);
+
           let toSend = this.rawStdinBuffer;
-          if (partialMatch && partialMatch.index !== undefined) {
-            toSend = this.rawStdinBuffer.slice(0, partialMatch.index);
-            this.rawStdinBuffer = partialMatch[0];
-            this.rawStdinFlushTimer = setTimeout(flushPending, 50);
+
+          if (sgrPartial || x10Partial) {
+            const p = (sgrPartial || x10Partial)!;
+            toSend = this.rawStdinBuffer.slice(0, p.index);
+            this.rawStdinBuffer = p[0];
+            this.rawStdinFlushTimer = setTimeout(onEscapeTimeout, 250);
+          } else if (urxvtOrCsiPartial || escPartial) {
+            const p = (urxvtOrCsiPartial || escPartial)!;
+            toSend = this.rawStdinBuffer.slice(0, p.index);
+            this.rawStdinBuffer = p[0];
+            this.rawStdinFlushTimer = setTimeout(onEscapeTimeout, 30);
           } else {
             this.rawStdinBuffer = '';
           }
@@ -930,12 +982,12 @@ export class MaosTui {
       const sgrMouseMatch = str ? str.match(/(?:\x1b\[|\[)?<?(\d+);(\d+);(\d+)([Mm])/i) : null;
       if (sgrMouseMatch) {
         const btn = parseInt(sgrMouseMatch[1], 10);
-        // Mouse Wheel Vertical Scrolling (button 64 = wheel up, button 65 = wheel down)
-        if (btn === 64 || btn === 66) {
+        // Mouse Wheel Vertical Scrolling (buttons 64, 66, 68, 72, 80 = up, 65, 67, 69, 73, 81 = down)
+        if (btn === 64 || btn === 66 || btn === 68 || btn === 72 || btn === 80) {
           this.scrollUpCurrentView(3);
           return;
         }
-        if (btn === 65 || btn === 67) {
+        if (btn === 65 || btn === 67 || btn === 69 || btn === 73 || btn === 81) {
           this.scrollDownCurrentView(3);
           return;
         }
@@ -946,11 +998,21 @@ export class MaosTui {
 
       // X10 / Normal Mouse Mode: \x1b[M...
       if (str && (str.startsWith('\x1b[M') || str.startsWith('[M'))) {
-        if (str.startsWith('\x1b[M\x60') || str.startsWith('[M\x60')) {
+        if (
+          str.startsWith('\x1b[M\x60') ||
+          str.startsWith('[M\x60') ||
+          str.startsWith('\x1b[M\x62') ||
+          str.startsWith('[M\x62')
+        ) {
           this.scrollUpCurrentView(3);
           return;
         }
-        if (str.startsWith('\x1b[M\x61') || str.startsWith('[M\x61')) {
+        if (
+          str.startsWith('\x1b[M\x61') ||
+          str.startsWith('[M\x61') ||
+          str.startsWith('\x1b[M\x63') ||
+          str.startsWith('[M\x63')
+        ) {
           this.scrollDownCurrentView(3);
           return;
         }
@@ -1169,7 +1231,14 @@ export class MaosTui {
           return;
         }
         const isPrintable =
-          str && str.length === 1 && !str.includes('\x1b') && !str.includes('\u001b') && !/[\x00-\x1f]/.test(str);
+          str &&
+          str.length === 1 &&
+          !str.includes('\x1b') &&
+          !str.includes('\u001b') &&
+          !/^\[?<\d+;/.test(str) &&
+          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
+          !/^[<\[;]\d+/.test(str) &&
+          !/[\x00-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInputText += str;
           this.render();
@@ -2424,6 +2493,9 @@ export class MaosTui {
       const maxScroll = Math.max(0, this.settingsRenderedRowCount - this.settingsViewportRows);
       this.settingsScrollOffset = Math.max(0, this.settingsScrollOffset - (step || 2));
       this.render();
+    } else if (this.activeTab === 3 && this.swarmAgents.length > 0) {
+      this.selectedSwarmAgentIndex = Math.max(0, this.selectedSwarmAgentIndex - 1);
+      this.render();
     }
   }
 
@@ -2439,6 +2511,9 @@ export class MaosTui {
     } else if (this.activeTab === 0 && this.settingsRenderedRowCount > this.settingsViewportRows) {
       const maxScroll = Math.max(0, this.settingsRenderedRowCount - this.settingsViewportRows);
       this.settingsScrollOffset = Math.min(maxScroll, this.settingsScrollOffset + (step || 2));
+      this.render();
+    } else if (this.activeTab === 3 && this.swarmAgents.length > 0) {
+      this.selectedSwarmAgentIndex = Math.min(this.swarmAgents.length - 1, this.selectedSwarmAgentIndex + 1);
       this.render();
     }
   }

@@ -447,7 +447,7 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
       (tui as any).cleanupKeyboard();
     });
 
-    it('completely suppresses trackpad scrolling bursts and split escape chunks without leaking numbers into active inputs', () => {
+    it('completely suppresses trackpad scrolling bursts and split escape chunks without leaking numbers into active inputs', async () => {
       const tui = new MaosTui(tmpDir);
       (tui as any).setupKeyboard();
 
@@ -463,18 +463,31 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
       process.stdin.emit('data', '\x1b[<32;70;35M\x1b[<35;70;35m');
       expect((tui as any).modalInputText).toBe('');
 
-      // Simulate split chunks cut mid-sequence
+      // Simulate synchronous split chunks cut mid-sequence
       process.stdin.emit('data', '\x1b[<64;32;');
       process.stdin.emit('data', '15M');
       expect((tui as any).modalInputText).toBe('');
 
-      // Simulate dangling coordinate sequence if header was severed
-      process.stdin.emit('data', '32;70;35M');
+      // Simulate asynchronous split chunks with realistic delay across event loop ticks
+      process.stdin.emit('data', '\x1b[<64;10;');
+      await new Promise((r) => setTimeout(r, 60));
+      process.stdin.emit('data', '20M');
       expect((tui as any).modalInputText).toBe('');
 
-      // Normal typing with numbers and semicolons must pass through intact
-      process.stdin.emit('data', 'deploy 3d studio; port 3030');
-      expect((tui as any).modalInputText).toBe('deploy 3d studio; port 3030');
+      // Simulate dangling coordinate sequence if header was severed
+      process.stdin.emit('data', '<32;70;35M');
+      expect((tui as any).modalInputText).toBe('');
+
+      // Normal typing with numbers, semicolons, and unit identifiers must pass through intact
+      process.stdin.emit('data', 'deploy 3d studio; port 3030; size 20M');
+      expect((tui as any).modalInputText).toBe('deploy 3d studio; port 3030; size 20M');
+
+      // In modal dialog mode (e.g. ignite prompt overlay)
+      (tui as any).modalMode = 'ignite';
+      (tui as any).modalInputText = '';
+      process.stdin.emit('data', '\x1b[<64;20;10M\x1b[<65;20;10M');
+      expect((tui as any).modalInputText).toBe('');
+      (tui as any).modalMode = 'none';
 
       // On Tab 2 (Dedicated Local Gemma Chat)
       (tui as any).activeTab = 2;
@@ -506,10 +519,17 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
         tui.start();
 
         const combined = written.join('');
-        // Must disable mouse reporting (1000l, 1002l, 1006l)
+        // Must disable all mouse reporting modes (1000l-1007l, 1015l, 1016l)
         expect(combined).toContain('\x1b[?1000l');
+        expect(combined).toContain('\x1b[?1001l');
         expect(combined).toContain('\x1b[?1002l');
+        expect(combined).toContain('\x1b[?1003l');
+        expect(combined).toContain('\x1b[?1004l');
+        expect(combined).toContain('\x1b[?1005l');
         expect(combined).toContain('\x1b[?1006l');
+        expect(combined).toContain('\x1b[?1007l');
+        expect(combined).toContain('\x1b[?1015l');
+        expect(combined).toContain('\x1b[?1016l');
 
         // Must NOT enable mouse reporting (1000h, 1002h, 1006h)
         expect(combined).not.toContain('\x1b[?1000h');
