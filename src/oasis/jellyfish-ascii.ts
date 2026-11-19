@@ -47,10 +47,18 @@ export const lift = (t: number): number => {
   return p < 0.4 ? ease(p / 0.4) : 1 - ease((p - 0.4) / 0.6);
 };
 
-export const rimAt = (t: number, totalCols: number = meta.cols): { c: number; x: number; y: number; half: number } => {
+export const rimAt = (
+  t: number,
+  totalCols: number = meta.cols,
+  totalRows: number = meta.rows,
+): { c: number; x: number; y: number; half: number } => {
   const c = squeeze(t);
-  const x = totalCols / 2 + 1.5 * Math.sin((2 * Math.PI * t) / (5 * P));
-  return { c, x, y: 11 - 0.8 * c - 1.4 * lift(t), half: (13 - 2.6 * c) * (1 - 0.3 * c) };
+  const scaleX = totalCols / meta.cols;
+  const scaleY = totalRows / meta.rows;
+  const x = totalCols / 2 + 1.5 * scaleX * Math.sin((2 * Math.PI * t) / (5 * P));
+  const y = (11 - 0.8 * c - 1.4 * lift(t)) * scaleY;
+  const half = (13 - 2.6 * c) * (1 - 0.3 * c) * scaleX;
+  return { c, x, y, half };
 };
 
 /**
@@ -83,7 +91,10 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
     return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
   };
 
-  const specks = Array.from({ length: 30 }, () => ({
+  const isStandard = cols === meta.cols && rows === meta.rows;
+  const speckCount = isStandard ? 30 : Math.max(2, Math.round((30 * (cols * rows)) / (meta.cols * meta.rows)));
+
+  const specks = Array.from({ length: speckCount }, () => ({
     x: rnd() * cols,
     y: rnd() * rows,
     z: 0.4 + rnd() * 0.6,
@@ -110,14 +121,16 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
     put(s.x + 0.6 * Math.sin(t * 0.5 + s.w), y, s.z > 0.8 ? '·' : '.');
   }
 
-  const now = rimAt(t, cols);
+  const scaleX = cols / meta.cols;
+  const scaleY = rows / meta.rows;
+  const now = rimAt(t, cols, rows);
   const { c } = now;
-  const a = 13 - 2.6 * c;
-  const b = 13 + 2 * c;
+  const a = (13 - 2.6 * c) * scaleX;
+  const b = (13 + 2 * c) * scaleY;
   const rim = Math.floor(now.y);
 
   const trail = (d: number, lagPer: number) => {
-    const was = rimAt(t - d * lagPer, cols);
+    const was = rimAt(t - (d / scaleY) * lagPer, cols, rows);
     return { x: was.x, y: rim + d + Math.max(0, was.y - now.y) * 0.8, half: was.half };
   };
   const cx = now.x;
@@ -144,12 +157,12 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
 
   for (let i = 0; i < 8; i++) {
     const u = -0.92 + (1.84 * i) / 7;
-    const wob = (d: number) => Math.sin(d * 0.5 - t * 3 + i * 1.9);
-    const len = 8.5 + 3.2 * (1 - Math.abs(u)) + ((i * 3) % 5) * 0.8;
+    const wob = (d: number) => Math.sin((d / scaleY) * 0.5 - t * 3 + i * 1.9);
+    const len = (8.5 + 3.2 * (1 - Math.abs(u)) + ((i * 3) % 5) * 0.8) * scaleY;
     strand(
       len,
       0.06,
-      (d, at) => at.x + u * at.half * (1 - 0.01 * d) + (0.05 + d * 0.013) * d * wob(d),
+      (d, at) => at.x + u * at.half * (1 - 0.01 * (d / scaleY)) + (0.05 + (d / scaleY) * 0.013) * d * wob(d),
       (x, y, dx, bow, _d, f) => {
         const ch =
           f > 0.9
@@ -173,11 +186,14 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
   for (let i = 0; i < 2; i++) {
     const s = i ? 1 : -1;
     strand(
-      10,
+      10 * scaleY,
       0.09,
-      (d, at) => at.x + s * 2 * (1 - d * 0.06) * (at.half / 10) + 0.9 * Math.sin(d * 0.6 - t * 2.2 + i * 2.5),
+      (d, at) =>
+        at.x +
+        s * 2 * scaleX * (1 - (d / scaleY) * 0.06) * (at.half / Math.max(0.1, 10 * scaleX)) +
+        0.9 * scaleX * Math.sin((d / scaleY) * 0.6 - t * 2.2 + i * 2.5),
       (x, y, _dx, _bow, d, f) => {
-        const tw = Math.cos(d * 1.1 + i * 1.3 - t * 1.6);
+        const tw = Math.cos((d / scaleY) * 1.1 + i * 1.3 - t * 1.6);
         if (f > 0.8) return put(x, y, f > 0.9 ? '.' : ':');
         if (Math.abs(tw) < 0.35) return put(x, y, ':');
         put(x, y, ';');
@@ -197,6 +213,10 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
     if (Math.abs(u) < 1) grid[rim * cols + x] = Math.abs(u) > 0.93 ? "'" : x & 1 ? '~' : "'";
   }
 
+  const edgeThreshold = isStandard
+    ? 10
+    : Math.max(5, Math.min(10, Math.round(10 * Math.min(1, Math.max(0.5, (scaleX + scaleY) / 2)))));
+
   for (let r = 0; r < rim; r++) {
     for (let x = 0; x < cols; x++) {
       let n = 0;
@@ -213,12 +233,12 @@ export function generateJellyfishRawFrame(t: number = 0, cols: number = meta.col
       }
       if (!n) continue;
       const k = r * cols + x;
-      if (n < 10) {
+      if (n < edgeThreshold) {
         const ux = sx / n;
         const uy = sy / n;
-        if (uy > Math.abs(ux) * 1.2) grid[k] = n < 5 ? '_' : '-';
+        if (uy > Math.abs(ux) * 1.2) grid[k] = n < Math.round(edgeThreshold * 0.5) ? '_' : '-';
         else if (Math.abs(ux) > uy * 1.5) grid[k] = ux > 0 ? '(' : ')';
-        else grid[k] = n < 4 ? '.' : ux > 0 ? '/' : '\\';
+        else grid[k] = n < Math.round(edgeThreshold * 0.4) ? '.' : ux > 0 ? '/' : '\\';
         continue;
       }
       const s = Math.max(0, ((now.y - r - 0.5) * 2) / b);
@@ -275,140 +295,33 @@ export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number)
 export function renderColoredJellyfish(t: number = 0, cols: number = meta.cols, rows: number = meta.rows): string[] {
   const rawText = generateJellyfishRawFrame(t, cols, rows);
   const rawLines = rawText.split('\n');
-  const rimRow = Math.floor(rimAt(t, cols).y);
+  const rimRow = Math.floor(rimAt(t, cols, rows).y);
 
   return rawLines.map((line, r) => {
     let out = '';
-    for (let cIdx = 0; cIdx < line.length; cIdx++) {
-      out += colorJellyfishChar(line[cIdx], r, rimRow);
+    for (let cIdx = 0; cIdx < cols; cIdx++) {
+      out += colorJellyfishChar(line[cIdx] || ' ', r, rimRow);
     }
     return out;
   });
 }
 
 /**
- * Compact Jellyfish Mascot (8 rows x 20 cols) optimized for TUI Header & Cards.
- * Implements the authentic mathematical moon jelly simulation (P = 2.2s stroke)
- * scaled to compact header dimensions with bell squeezing, inner horseshoe ring,
- * rim margin, oral arms, trailing tentacles, and cyberpunk luminescence.
+ * Compact Jellyfish Mascot (defaults to 8 rows x 20 cols) optimized for TUI Header & Cards.
+ * Accurately renders the authentic mathematical moon jelly geometry from the core simulation:
+ * recognizable bell dome, inner luminescence, wavy rim margin, frilled mouth arms,
+ * trailing tentacles, and cyberpunk luminescence.
  */
-export function renderJellyfishMascot(t: number = 0): string[] {
-  const cols = 20;
-  const rows = 8;
-  const grid = new Array(cols * rows).fill(' ');
-  const c = squeeze(t);
-  const cx = cols / 2 + 0.6 * Math.sin((2 * Math.PI * t) / (5 * P));
-  const rimY = Math.floor(3.5 - 0.4 * c - 0.5 * lift(t));
-  const a = 6.2 - 1.2 * c;
-  const b = 4.2 + 0.8 * c;
-  const half = a * (1 - 0.28 * c);
+export function renderJellyfishMascot(t: number = 0, cols: number = 20, rows: number = 8): string[] {
+  const rawText = generateJellyfishRawFrame(t, cols, rows);
+  const rawLines = rawText.split('\n');
+  const rimRow = Math.floor(rimAt(t, cols, rows).y);
 
-  const width = (s: number) => a * Math.sqrt(Math.max(0, 1 - s * s)) * (1 - 0.3 * c * (1 - s) ** 2);
-  const inside = (X: number, yy: number) => {
-    const s = ((rimY - yy) * 2) / b;
-    return s >= 0 && s < 1 && Math.abs(X) < width(s);
-  };
-
-  // Bell surface
-  for (let r = 0; r < rimY; r++) {
-    for (let x = 0; x < cols; x++) {
-      let n = 0;
-      let sx = 0;
-      let sy = 0;
-      for (let j = 0; j < 4; j++) {
-        for (let i = 0; i < 3; i++) {
-          if (inside(x + (i + 0.5) / 3 - cx, r + (j + 0.5) / 4)) {
-            n++;
-            sx += i - 1;
-            sy += (j - 1.5) / 1.5;
-          }
-        }
-      }
-      if (!n) continue;
-      const k = r * cols + x;
-      if (n < 7) {
-        const ux = sx / n;
-        const uy = sy / n;
-        if (uy > Math.abs(ux) * 1.2) grid[k] = n < 4 ? '_' : '-';
-        else if (Math.abs(ux) > uy * 1.5) grid[k] = ux > 0 ? '(' : ')';
-        else grid[k] = n < 4 ? '.' : ux > 0 ? '/' : '\\';
-        continue;
-      }
-      const s = Math.max(0, ((rimY - r - 0.5) * 2) / b);
-      const u = Math.max(-0.999, Math.min(0.999, (x + 0.5 - cx) / Math.max(0.1, width(s))));
-      const nz = Math.sqrt(1 - u * u) * Math.sqrt(1 - s * s);
-      const ph = Math.asin(u);
-      const g = Math.min(Math.abs(ph - 0.6), Math.abs(ph + 0.6));
-      const ring = Math.max(0, 1 - Math.abs(Math.hypot(g / 0.36, (s - 0.45) / 0.26) - 1) * 3.5);
-      const crown = 1 - 0.6 * ease(Math.max(0, (s - 0.62) / 0.38));
-      const v = Math.min(1, (0.16 + 0.07 * s + 0.6 * (1 - nz) ** 2) * crown + 0.55 * ring);
-      grid[k] = RAMP[Math.max(1, Math.round(v * (RAMP.length - 1)))];
-    }
-  }
-
-  // Rim margin
-  for (let x = 0; x < cols; x++) {
-    const u = (x + 0.5 - cx) / Math.max(0.1, width(0));
-    if (Math.abs(u) < 1) {
-      grid[rimY * cols + x] = Math.abs(u) > 0.9 ? "'" : x & 1 ? '~' : "'";
-    }
-  }
-
-  // Trailing undulating tentacles
-  const tentacleCount = 5;
-  for (let i = 0; i < tentacleCount; i++) {
-    const u = -0.82 + (1.64 * i) / (tentacleCount - 1);
-    const tx = cx + u * half;
-    for (let y = rimY + 1; y < rows; y++) {
-      const d = y - rimY;
-      const wob = Math.sin(d * 0.9 - t * 3.2 + i * 1.9);
-      const curX = Math.round(tx + (0.07 + d * 0.02) * d * wob);
-      if (curX >= 0 && curX < cols) {
-        const isMouth = d <= 2 && Math.abs(u) < 0.25;
-        const ch =
-          isMouth
-            ? ';'
-            : d >= 4
-              ? d === rows - rimY - 1
-                ? '.'
-                : ':'
-              : wob > 0.3
-                ? '/'
-                : wob < -0.3
-                  ? '\\'
-                  : '|';
-        grid[y * cols + curX] = ch;
-      }
-    }
-  }
-
-  const rawRows: string[] = [];
-  for (let r = 0; r < rows; r++) {
-    rawRows.push(grid.slice(r * cols, (r + 1) * cols).join(''));
-  }
-
-  return rawRows.map((row, idx) => {
+  return rawLines.map((line, r) => {
     let colored = '';
-    for (const char of row) {
-      if (char === ' ') {
-        colored += ' ';
-      } else if (idx < rimY) {
-        if (['@', '%', '#', '*'].includes(char)) {
-          colored += palette.cyanBright(char);
-        } else if (['+', '=', ':'].includes(char)) {
-          colored += palette.violetBright(char);
-        } else {
-          colored += palette.violet(char);
-        }
-      } else if (idx === rimY) {
-        colored += palette.cyan(char);
-      } else if (char === ';') {
-        colored += palette.emerald(char);
-      } else if (['.', ':'].includes(char)) {
-        colored += palette.slateMuted(char);
-      } else {
-        colored += palette.cyanBright(char);
-      }
+    for (let cIdx = 0; cIdx < cols; cIdx++) {
+      const char = line[cIdx] || ' ';
+      colored += colorJellyfishChar(char, r, rimRow);
     }
     return colored;
   });

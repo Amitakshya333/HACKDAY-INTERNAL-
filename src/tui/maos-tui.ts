@@ -818,13 +818,64 @@ export class MaosTui {
         return;
       }
 
-      // Mouse Wheel Vertical Scrolling (supported across modern terminal emulators)
-      if (str && (str.includes('<64;') || str.includes('\x1b[<64;') || str.startsWith('\x1b[M\x60'))) {
-        this.scrollUpCurrentView(3);
+      // ── MOUSE AND ANSI ESCAPE SEQUENCE FILTER ────────────────────────────
+      // SGR Extended Mouse Mode: \x1b[<button;col;rowM (press) or \x1b[<button;col;rowm (release)
+      const sgrMouseMatch = str
+        ? str.match(/(?:\x1b\[|\[|<)<(\d+);(\d+);(\d+)([Mm])/) || str.match(/<(\d+);(\d+);(\d+)([Mm])/)
+        : null;
+      if (sgrMouseMatch) {
+        const btn = parseInt(sgrMouseMatch[1], 10);
+        // Mouse Wheel Vertical Scrolling (button 64 = wheel up, button 65 = wheel down)
+        if (btn === 64 || btn === 66) {
+          this.scrollUpCurrentView(3);
+          return;
+        }
+        if (btn === 65 || btn === 67) {
+          this.scrollDownCurrentView(3);
+          return;
+        }
+
+        // Left button click, release, motion, or other button events are cleanly consumed
         return;
       }
-      if (str && (str.includes('<65;') || str.includes('\x1b[<65;') || str.startsWith('\x1b[M\x61'))) {
-        this.scrollDownCurrentView(3);
+
+      // X10 / Normal Mouse Mode: \x1b[M...
+      if (str && (str.startsWith('\x1b[M') || str.startsWith('[M'))) {
+        if (str.startsWith('\x1b[M\x60') || str.startsWith('[M\x60')) {
+          this.scrollUpCurrentView(3);
+          return;
+        }
+        if (str.startsWith('\x1b[M\x61') || str.startsWith('[M\x61')) {
+          this.scrollDownCurrentView(3);
+          return;
+        }
+        // Consume all other X10 mouse tracking sequences
+        return;
+      }
+
+      // Terminal state / control sequence filtering (focus, bracketed paste, terminal reports)
+      if (
+        str &&
+        (str === '\x1b[I' ||
+          str === '\x1b[O' ||
+          str.startsWith('\x1b[200~') ||
+          str.startsWith('\x1b[201~') ||
+          /^\x1b\[\??\d+(?:;\d+)*[a-zA-Z~]$/.test(str)) &&
+        key.name !== 'up' &&
+        key.name !== 'down' &&
+        key.name !== 'left' &&
+        key.name !== 'right' &&
+        key.name !== 'pageup' &&
+        key.name !== 'pagedown' &&
+        key.name !== 'home' &&
+        key.name !== 'end' &&
+        key.name !== 'delete' &&
+        key.name !== 'insert' &&
+        key.name !== 'tab' &&
+        key.name !== 'escape' &&
+        key.name !== 'return' &&
+        key.name !== 'backspace'
+      ) {
         return;
       }
 
@@ -1010,7 +1061,9 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (str && str.length === 1 && !key.ctrl && !key.meta) {
+        const isPrintable =
+          str && str.length === 1 && !str.includes('\x1b') && !str.includes('\u001b') && !/[\x00-\x1f]/.test(str);
+        if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInputText += str;
           this.render();
           return;
@@ -1118,7 +1171,13 @@ export class MaosTui {
         }
 
         // Capture ANY typed character directly into the input box:
-        if (str && !key.ctrl && !key.meta) {
+        const isPrintable =
+          str &&
+          !str.includes('\x1b') &&
+          !str.includes('\u001b') &&
+          !/^\[?<\d+;/.test(str) &&
+          !/[\x00-\x08\x0b-\x1f]/.test(str);
+        if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInputText += str;
           this.commandHistoryIndex = this.commandHistory.length;
           this.render();
@@ -1196,7 +1255,13 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (str && !key.ctrl && !key.meta) {
+        const isPrintable =
+          str &&
+          !str.includes('\x1b') &&
+          !str.includes('\u001b') &&
+          !/^\[?<\d+;/.test(str) &&
+          !/[\x00-\x08\x0b-\x1f]/.test(str);
+        if (isPrintable && !key.ctrl && !key.meta) {
           this.chatInputText += str;
           this.render();
           return;

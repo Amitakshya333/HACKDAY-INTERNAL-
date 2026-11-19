@@ -470,8 +470,8 @@ export function renderSwarmBoard(
   // ──────────────────────────────────────────────────────────────────────────
   // 1. HEADER WITH JELLYFISH MASCOT
   // ──────────────────────────────────────────────────────────────────────────
-  const mascotLines = renderJellyfishMascot(time);
-  const mascotWidth = W >= 60 ? 20 : Math.max(10, Math.floor(W * 0.35));
+  const mascotWidth = 20;
+  const mascotLines = renderJellyfishMascot(time, mascotWidth, 8);
   const headerInfoWidth = Math.max(0, W - mascotWidth - 3);
 
   const activeCount = agents.filter((a) => a.state === 'working').length;
@@ -507,16 +507,16 @@ export function renderSwarmBoard(
     lines.push(pad(banner, W));
     lines.push(c.slateBorder('─'.repeat(W)));
 
-    if (W >= 85) {
-      // 2-column layout: Left = Mathematical Moon Jellyfish (38 cells), Right = Deep Inspector (W - 41 cells)
-      const jellyWidth = 36;
-      const jellyHeight = 16;
-      const leftColWidth = 38;
+    if (W >= 88) {
+      // 2-column layout: Left = Full Mathematical Moon Jellyfish (44 cells), Right = Deep Inspector (W - 47 cells)
+      const jellyCols = 44;
+      const jellyRows = 26;
+      const leftColWidth = 44;
       const rightColWidth = Math.max(30, W - leftColWidth - 3);
 
-      const rawJelly = renderColoredJellyfish(time, jellyWidth, jellyHeight);
+      const rawJelly = renderColoredJellyfish(time, jellyCols, jellyRows);
       const leftRows: string[] = [
-        pad(c.cyanBright('MOON JELLYFISH SWARM KERNEL'), leftColWidth),
+        pad(c.cyanBright('MOON JELLYFISH SWARM KERNEL (44x26)'), leftColWidth),
         c.slateBorder('─'.repeat(leftColWidth)),
         ...rawJelly.map((jl) => pad(jl, leftColWidth)),
         c.slateBorder('─'.repeat(leftColWidth)),
@@ -560,7 +560,7 @@ export function renderSwarmBoard(
 
       const diffRows =
         selectedAgent.gitDiff && selectedAgent.gitDiff.length > 0 ? selectedAgent.gitDiff : ['+ No local diff'];
-      for (const d of diffRows.slice(0, 9)) {
+      for (const d of diffRows.slice(0, 16)) {
         const col = d.startsWith('+')
           ? c.emerald
           : d.startsWith('-')
@@ -580,10 +580,13 @@ export function renderSwarmBoard(
       }
     } else {
       // Single-column layout for narrow viewports
-      const mascot = renderJellyfishMascot(time);
-      for (const mLine of mascot) {
+      lines.push(centerTerminalLine(c.cyanBright('MOON JELLYFISH SWARM KERNEL (44x26)'), W));
+      lines.push(c.slateBorder('─'.repeat(W)));
+      const rawJelly = renderColoredJellyfish(time, 44, 26);
+      for (const mLine of rawJelly) {
         lines.push(centerTerminalLine(mLine, W));
       }
+      lines.push(c.slateBorder('─'.repeat(W)));
       lines.push(
         pad(
           `${c.cyanBright('Role:')} ${c.boldWhite(selectedAgent.role)}  ${c.slateBorder('│')}  ${c.slateText('Branch:')} ${c.cyan(selectedAgent.branch)}  ${c.slateBorder('│')}  ${c.slateText('Status:')} ${selectedAgent.state === 'working' ? c.cyanBright('● working') : selectedAgent.state === 'done' ? c.emerald('✓ done') : c.amber('○ waiting')}`,
@@ -608,7 +611,7 @@ export function renderSwarmBoard(
       lines.push(c.slateBorder('├' + '─'.repeat(Math.max(0, W - 2)) + '┤'));
       const diffRows =
         selectedAgent.gitDiff && selectedAgent.gitDiff.length > 0 ? selectedAgent.gitDiff : ['+ No local diff'];
-      for (const d of diffRows.slice(0, 6)) {
+      for (const d of diffRows.slice(0, 10)) {
         const col = d.startsWith('+')
           ? c.emerald
           : d.startsWith('-')

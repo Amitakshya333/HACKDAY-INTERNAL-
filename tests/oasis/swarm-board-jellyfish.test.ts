@@ -391,5 +391,80 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
       expect(worker1?.branch).toBe('maos-ignite-0');
       expect(worker1?.gitDiff && worker1.gitDiff.length > 0).toBe(true);
     });
+
+    it('intercepts mouse and terminal escape sequences without corrupting input boxes', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+
+      // On Tab 1 (Mission Control / prompt input)
+      (tui as any).activeTab = 1;
+      (tui as any).modalInputText = '';
+
+      // Simulate SGR mouse wheel up / down
+      process.stdin.emit('keypress', '\x1b[<64;35;12M', { name: undefined, sequence: '\x1b[<64;35;12M' });
+      process.stdin.emit('keypress', '\x1b[<65;35;12M', { name: undefined, sequence: '\x1b[<65;35;12M' });
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate SGR mouse left click press and release
+      process.stdin.emit('keypress', '\x1b[<0;20;10M', { name: undefined, sequence: '\x1b[<0;20;10M' });
+      process.stdin.emit('keypress', '\x1b[<0;20;10m', { name: undefined, sequence: '\x1b[<0;20;10m' });
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate SGR mouse drag / motion
+      process.stdin.emit('keypress', '\x1b[<32;25;15M', { name: undefined, sequence: '\x1b[<32;25;15M' });
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate X10 mouse tracking sequences
+      process.stdin.emit('keypress', '\x1b[M\x60!!', { name: undefined, sequence: '\x1b[M\x60!!' });
+      process.stdin.emit('keypress', '\x1b[M\x61!!', { name: undefined, sequence: '\x1b[M\x61!!' });
+      process.stdin.emit('keypress', '\x1b[M !!', { name: undefined, sequence: '\x1b[M !!' });
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate focus events and bracketed paste mode tags
+      process.stdin.emit('keypress', '\x1b[I', { name: undefined, sequence: '\x1b[I' });
+      process.stdin.emit('keypress', '\x1b[O', { name: undefined, sequence: '\x1b[O' });
+      process.stdin.emit('keypress', '\x1b[200~', { name: undefined, sequence: '\x1b[200~' });
+      process.stdin.emit('keypress', '\x1b[201~', { name: undefined, sequence: '\x1b[201~' });
+      expect((tui as any).modalInputText).toBe('');
+
+      // Verify that valid typed keys ARE accepted
+      process.stdin.emit('keypress', 'a', { name: 'a', ctrl: false, meta: false });
+      process.stdin.emit('keypress', 'b', { name: 'b', ctrl: false, meta: false });
+      expect((tui as any).modalInputText).toBe('ab');
+
+      // On Tab 2 (Dedicated Local Gemma Chat)
+      (tui as any).activeTab = 2;
+      (tui as any).chatInputText = '';
+
+      process.stdin.emit('keypress', '\x1b[<0;10;5M', { name: undefined, sequence: '\x1b[<0;10;5M' });
+      process.stdin.emit('keypress', '\x1b[<35;10;5m', { name: undefined, sequence: '\x1b[<35;10;5m' });
+      expect((tui as any).chatInputText).toBe('');
+
+      process.stdin.emit('keypress', 'h', { name: 'h', ctrl: false, meta: false });
+      process.stdin.emit('keypress', 'i', { name: 'i', ctrl: false, meta: false });
+      expect((tui as any).chatInputText).toBe('hi');
+    });
+
+    it('renders authentic mathematical moon jelly geometry with bell curve, wavy rim, and tentacles', () => {
+      // Test across multiple stroke phases
+      for (const t of [0.0, 0.4, 0.8, 1.2, 1.6, 2.0]) {
+        const raw = generateJellyfishRawFrame(t, 44, 26);
+        const lines = raw.split('\n');
+        expect(lines).toHaveLength(26);
+
+        // Every frame must contain wavy rim margin
+        expect(raw).toMatch(/~|'/);
+        // Every frame must contain tentacles or frills
+        expect(raw).toMatch(/\||\/|\\|\(|\)/);
+        expect(raw).toMatch(/;/);
+
+        // Header mascot at this phase must be 8 rows of width 20 and recognizable
+        const mascot = renderJellyfishMascot(t, 20, 8);
+        expect(mascot).toHaveLength(8);
+        for (const line of mascot) {
+          expect(terminalCellWidth(line)).toBe(20);
+        }
+      }
+    });
   });
 });
