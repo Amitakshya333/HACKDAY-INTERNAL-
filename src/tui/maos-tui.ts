@@ -491,6 +491,11 @@ export class MaosTui {
   private previewServer: http.Server | null = null;
   private previewPort: number = 3030;
 
+  private rawStdinBuffer: string = '';
+  private rawStdinFlushTimer: NodeJS.Timeout | null = null;
+  private origStdinEmit: ((event: string | symbol, ...args: any[]) => boolean) | null = null;
+  private keypressHandler: ((str: string | undefined, key: any) => void) | null = null;
+
   private settingsScrollOffset: number = 0;
   private settingsViewportRows: number = 16;
   private settingsRenderedRowCount: number = 0;
@@ -709,8 +714,11 @@ export class MaosTui {
   }
 
   public start(): void {
-    // Switch to alternate screen buffer, clear screen, hide cursor & enable mouse reporting
-    process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000h\x1b[?1002h\x1b[?1006h');
+    // Switch to alternate screen buffer, clear screen, hide cursor & explicitly disable mouse reporting.
+    // Disabling DEC modes 1000, 1001, 1002, 1003, 1005, 1006, 1015 prevents trackpad scroll gestures from sending escape bursts to stdin
+    process.stdout.write(
+      '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l',
+    );
 
     this.setupKeyboard();
     this.updateGpuTelemetry();
@@ -739,6 +747,22 @@ export class MaosTui {
     // Clean exit handlers
     process.on('SIGINT', this.interruptHandler);
     process.on('SIGTERM', this.terminateHandler);
+  }
+
+  public cleanupKeyboard(): void {
+    if (this.rawStdinFlushTimer) {
+      clearTimeout(this.rawStdinFlushTimer);
+      this.rawStdinFlushTimer = null;
+    }
+    this.rawStdinBuffer = '';
+    if (this.origStdinEmit) {
+      process.stdin.emit = this.origStdinEmit;
+      this.origStdinEmit = null;
+    }
+    if (this.keypressHandler) {
+      process.stdin.removeListener('keypress', this.keypressHandler);
+      this.keypressHandler = null;
+    }
   }
 
   private exit(): void {
@@ -773,8 +797,11 @@ export class MaosTui {
       } catch {}
       this.previewServer = null;
     }
+    this.cleanupKeyboard();
     // Restore normal screen buffer, disable mouse reporting, reveal cursor
-    process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?1049l\x1b[?25h');
+    process.stdout.write(
+      '\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1049l\x1b[?25h',
+    );
     console.log(c.cyanBright('✦ MAOS Oasis TUI closed. Returning to terminal.'));
     process.exit(0);
   }
@@ -789,9 +816,88 @@ export class MaosTui {
       process.stdin.resume();
       process.stdin.setEncoding('utf8');
     } catch {}
+
+    // Intercept raw stdin data events BEFORE readline's emitKeypressEvents processes them.
+    // Provides stream-level buffering so that bursts of SGR mouse escape sequences
+    // (e.g. \x1b[<64;col;rowM generated during trackpad scrolling in Windows terminal)
+    // are cleanly stripped or handled, even if the terminal splits them across chunk boundaries.
+    if (!this.origStdinEmit) {
+      const origEmit = process.stdin.emit.bind(process.stdin);
+      this.origStdinEmit = origEmit;
+
+      const MOUSE_SEQ_REGEX = /\x1b\[(?:<(?:\d+);(?:\d+);(?:\d+)[Mm]|M[\s\S]{3}|(?:\d+);(?:\d+);(?:\d+)M)/g;
+      const DANGLING_MOUSE_REGEX = /(?:<|\[<)?\d+;\d+;\d+[Mm]/g;
+      const PARTIAL_MOUSE_REGEX = /\x1b\[(?:<[\d;]*|M[\s\S]{0,2})$/;
+
+      const flushPending = () => {
+        if (this.rawStdinFlushTimer) {
+          clearTimeout(this.rawStdinFlushTimer);
+          this.rawStdinFlushTimer = null;
+        }
+        if (this.rawStdinBuffer) {
+          const toSend = this.rawStdinBuffer;
+          this.rawStdinBuffer = '';
+          origEmit('data', toSend);
+        }
+      };
+
+      process.stdin.emit = (event: string | symbol, ...args: any[]): boolean => {
+        if (event === 'data' && args[0] !== undefined) {
+          if (this.rawStdinFlushTimer) {
+            clearTimeout(this.rawStdinFlushTimer);
+            this.rawStdinFlushTimer = null;
+          }
+          const chunkStr = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
+          this.rawStdinBuffer += chunkStr;
+
+          // Strip complete SGR and X10 mouse sequences and map wheel scrolling
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(MOUSE_SEQ_REGEX, (match) => {
+            const wheelMatch = match.match(/<(\d+);/);
+            if (wheelMatch) {
+              const btn = parseInt(wheelMatch[1], 10);
+              if (btn === 64 || btn === 66) {
+                this.scrollUpCurrentView(3);
+              } else if (btn === 65 || btn === 67) {
+                this.scrollDownCurrentView(3);
+              }
+            } else if (match.startsWith('\x1b[M\x60')) {
+              this.scrollUpCurrentView(3);
+            } else if (match.startsWith('\x1b[M\x61')) {
+              this.scrollDownCurrentView(3);
+            }
+            return '';
+          });
+
+          // Strip any dangling coordinate sequences if escape header was cut or dropped
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(DANGLING_MOUSE_REGEX, '');
+
+          // Check if buffer ends with an incomplete mouse sequence header (e.g. \x1b[<64;, \x1b[M)
+          const partialMatch = this.rawStdinBuffer.match(PARTIAL_MOUSE_REGEX);
+          let toSend = this.rawStdinBuffer;
+          if (partialMatch && partialMatch.index !== undefined) {
+            toSend = this.rawStdinBuffer.slice(0, partialMatch.index);
+            this.rawStdinBuffer = partialMatch[0];
+            this.rawStdinFlushTimer = setTimeout(flushPending, 50);
+          } else {
+            this.rawStdinBuffer = '';
+          }
+
+          if (!toSend) {
+            return true;
+          }
+          args[0] = Buffer.isBuffer(args[0]) ? Buffer.from(toSend, 'utf8') : toSend;
+        }
+        return origEmit(event, ...args);
+      };
+    }
+
     readline.emitKeypressEvents(process.stdin);
 
-    process.stdin.on('keypress', (str, key) => {
+    if (this.keypressHandler) {
+      process.stdin.removeListener('keypress', this.keypressHandler);
+    }
+
+    this.keypressHandler = (str, key) => {
       // Synthesize key object if undefined from readline on raw Windows stream
       if (!key) {
         if (!str) return;
@@ -820,9 +926,8 @@ export class MaosTui {
 
       // ── MOUSE AND ANSI ESCAPE SEQUENCE FILTER ────────────────────────────
       // SGR Extended Mouse Mode: \x1b[<button;col;rowM (press) or \x1b[<button;col;rowm (release)
-      const sgrMouseMatch = str
-        ? str.match(/(?:\x1b\[|\[|<)<(\d+);(\d+);(\d+)([Mm])/) || str.match(/<(\d+);(\d+);(\d+)([Mm])/)
-        : null;
+      // Also handles stripped headers or coordinate fragments like <64;35;12M or 64;35;12M
+      const sgrMouseMatch = str ? str.match(/(?:\x1b\[|\[)?<?(\d+);(\d+);(\d+)([Mm])/i) : null;
       if (sgrMouseMatch) {
         const btn = parseInt(sgrMouseMatch[1], 10);
         // Mouse Wheel Vertical Scrolling (button 64 = wheel up, button 65 = wheel down)
@@ -853,14 +958,16 @@ export class MaosTui {
         return;
       }
 
-      // Terminal state / control sequence filtering (focus, bracketed paste, terminal reports)
+      // Terminal state / control sequence filtering (focus, bracketed paste, terminal reports, dangling mouse fragments)
       if (
         str &&
         (str === '\x1b[I' ||
           str === '\x1b[O' ||
           str.startsWith('\x1b[200~') ||
           str.startsWith('\x1b[201~') ||
-          /^\x1b\[\??\d+(?:;\d+)*[a-zA-Z~]$/.test(str)) &&
+          /^\x1b\[\??\d+(?:;\d+)*[a-zA-Z~]$/.test(str) ||
+          /^(?:\[?<|;)?\d+(?:;\d+)*[Mm]$/i.test(str) ||
+          /^[<\[;]\d+/.test(str)) &&
         key.name !== 'up' &&
         key.name !== 'down' &&
         key.name !== 'left' &&
@@ -995,7 +1102,7 @@ export class MaosTui {
           return;
         }
         // Direct number keys switch views:
-        if (['0', '1', '2', '3', '4', '5'].includes(str)) {
+        if (str && ['0', '1', '2', '3', '4', '5'].includes(str)) {
           this.activeTab = Number(str);
           this.statusMessage = `Switched to View [${this.activeTab}].`;
           this.render();
@@ -1176,6 +1283,8 @@ export class MaosTui {
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
+          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
+          !/^[<\[;]\d+/.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.modalInputText += str;
@@ -1260,6 +1369,8 @@ export class MaosTui {
           !str.includes('\x1b') &&
           !str.includes('\u001b') &&
           !/^\[?<\d+;/.test(str) &&
+          !/^\d*(?:;\d+)+[Mm]?$/i.test(str) &&
+          !/^[<\[;]\d+/.test(str) &&
           !/[\x00-\x08\x0b-\x1f]/.test(str);
         if (isPrintable && !key.ctrl && !key.meta) {
           this.chatInputText += str;
@@ -1442,7 +1553,8 @@ export class MaosTui {
         this.render();
         return;
       }
-    });
+    };
+    process.stdin.on('keypress', this.keypressHandler);
   }
 
   private async handleModalSubmit(): Promise<void> {

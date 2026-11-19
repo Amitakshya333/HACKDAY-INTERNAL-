@@ -443,6 +443,86 @@ describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
       process.stdin.emit('keypress', 'h', { name: 'h', ctrl: false, meta: false });
       process.stdin.emit('keypress', 'i', { name: 'i', ctrl: false, meta: false });
       expect((tui as any).chatInputText).toBe('hi');
+
+      (tui as any).cleanupKeyboard();
+    });
+
+    it('completely suppresses trackpad scrolling bursts and split escape chunks without leaking numbers into active inputs', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+
+      // On Tab 1 (Dashboard / Prompt Input)
+      (tui as any).activeTab = 1;
+      (tui as any).modalInputText = '';
+
+      // Simulate trackpad rapid scroll burst on raw stdin stream
+      process.stdin.emit('data', '\x1b[<64;54;22M\x1b[<64;54;22M\x1b[<65;54;22M');
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate mouse motion / drag coordinates
+      process.stdin.emit('data', '\x1b[<32;70;35M\x1b[<35;70;35m');
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate split chunks cut mid-sequence
+      process.stdin.emit('data', '\x1b[<64;32;');
+      process.stdin.emit('data', '15M');
+      expect((tui as any).modalInputText).toBe('');
+
+      // Simulate dangling coordinate sequence if header was severed
+      process.stdin.emit('data', '32;70;35M');
+      expect((tui as any).modalInputText).toBe('');
+
+      // Normal typing with numbers and semicolons must pass through intact
+      process.stdin.emit('data', 'deploy 3d studio; port 3030');
+      expect((tui as any).modalInputText).toBe('deploy 3d studio; port 3030');
+
+      // On Tab 2 (Dedicated Local Gemma Chat)
+      (tui as any).activeTab = 2;
+      (tui as any).chatInputText = '';
+
+      // Trackpad scroll bursts on chat tab
+      process.stdin.emit('data', '\x1b[<64;10;5M\x1b[<65;10;5M');
+      expect((tui as any).chatInputText).toBe('');
+
+      process.stdin.emit('data', 'tell me about 3D canvas');
+      expect((tui as any).chatInputText).toBe('tell me about 3D canvas');
+
+      (tui as any).cleanupKeyboard();
+    });
+
+    it('disables terminal mouse reporting modes on startup and exit', () => {
+      const tui = new MaosTui(tmpDir);
+      const written: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((data: any) => {
+        written.push(String(data));
+        return true;
+      });
+
+      // Spy on timer/loop methods to prevent infinite loop
+      vi.spyOn(tui as any, 'startRefreshLoop').mockImplementation(() => {});
+      vi.spyOn(tui as any, 'render').mockImplementation(() => {});
+
+      try {
+        tui.start();
+
+        const combined = written.join('');
+        // Must disable mouse reporting (1000l, 1002l, 1006l)
+        expect(combined).toContain('\x1b[?1000l');
+        expect(combined).toContain('\x1b[?1002l');
+        expect(combined).toContain('\x1b[?1006l');
+
+        // Must NOT enable mouse reporting (1000h, 1002h, 1006h)
+        expect(combined).not.toContain('\x1b[?1000h');
+        expect(combined).not.toContain('\x1b[?1002h');
+        expect(combined).not.toContain('\x1b[?1006h');
+      } finally {
+        writeSpy.mockRestore();
+        (tui as any).cleanupKeyboard();
+        // Remove listeners attached by start()
+        process.stdout.removeListener('resize', (tui as any).resizeHandler);
+        process.removeListener('SIGINT', (tui as any).interruptHandler);
+        process.removeListener('SIGTERM', (tui as any).terminateHandler);
+      }
     });
 
     it('renders authentic mathematical moon jelly geometry with bell curve, wavy rim, and tentacles', () => {
