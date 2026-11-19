@@ -43,7 +43,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   window.addEventListener('DOMContentLoaded', () => {
     const displayArea = document.getElementById('display-area');
     const controlsArea = document.getElementById('controls-area');
-    if (!displayArea) return;
+    if (!displayArea || displayArea.querySelector('canvas.voxel-canvas')) return;
 
     displayArea.innerHTML = '';
     displayArea.style.position = 'relative';
@@ -53,6 +53,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     displayArea.style.borderRadius = '8px';
 
     const canvas = document.createElement('canvas');
+    canvas.className = 'voxel-canvas';
     canvas.width = displayArea.clientWidth || 900;
     canvas.height = 480;
     canvas.style.display = 'block';

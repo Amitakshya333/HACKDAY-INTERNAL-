@@ -1,7 +1,7 @@
 /**
- * Antigravity Swarm Board for MAOS Oasis (Tab 3)
+ * MAOS Swarm Board for MAOS Oasis (Tab 3)
  *
- * Implements the Antigravity Swarm Board layout:
+ * Implements the MAOS Swarm Board layout:
  * - Animated Jellyfish Mascot ASCII Art (Cyberpunk palette: violet, cyan, emerald, slate)
  * - Header: Jellyfish mascot alongside `Swarm board "<Current Goal>"` · N agents · [active]
  * - Roster: List of swarm members (`coordinator`, `ignite-worker-1` .. `ignite-worker-4`)
@@ -53,7 +53,9 @@ export function terminalCellWidth(value: string | undefined | null): number {
       points.includes(0x20e3) ||
       points.filter((v) => v >= 0x1f1e6 && v <= 0x1f1ff).length === 2 ||
       (point >= 0x1f300 && point <= 0x1faff) ||
-      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(point) ||
+      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(
+        point,
+      ) ||
       (hasVS16 && [0x26a0, 0x2699, 0x26d4, 0x26a1, 0x267f].includes(point)) ||
       (!hasVS16 && [0x26a1, 0x26d4, 0x267f].includes(point));
     width += wide || emojiPresentation ? 2 : 1;
@@ -428,7 +430,7 @@ export function createDefaultSwarmPosts(goal: string): SwarmPost[] {
 }
 
 /**
- * Renders the complete Antigravity Swarm Board for Tab 3.
+ * Renders the complete MAOS Swarm Board for Tab 3.
  */
 export function renderSwarmBoard(
   state: SwarmBoardState,

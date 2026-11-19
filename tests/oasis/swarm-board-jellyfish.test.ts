@@ -24,7 +24,7 @@ import {
 } from '../../src/oasis/swarm-board';
 import { MaosTui } from '../../src/tui/maos-tui';
 
-describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
+describe('MAOS Swarm Board & Jellyfish Mascot Suite', () => {
   // ── 1. Mathematical Jellyfish ASCII Simulation ────────────────────────────
   describe('Mathematical Jellyfish Generator', () => {
     it('produces exactly 26 rows and 44 columns as specified in meta', () => {
@@ -109,7 +109,7 @@ describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
   });
 
   // ── 2. Swarm Board Layout & Components ─────────────────────────────────────
-  describe('Antigravity Swarm Board Layout & Components', () => {
+  describe('MAOS Swarm Board Layout & Components', () => {
     let mockState: SwarmBoardState;
 
     beforeEach(() => {
@@ -348,7 +348,7 @@ describe('Antigravity Swarm Board & Jellyfish Mascot Suite', () => {
       }
     });
 
-    it('displays Tab 3 Antigravity hotkeys: Tab switch view · P preview · Enter expand · R refresh · Esc back', () => {
+    it('displays Tab 3 Swarm Board hotkeys: Tab switch view · P preview · Enter expand · R refresh · Esc back', () => {
       const tui = new MaosTui(tmpDir);
       (tui as any).activeTab = 3;
 

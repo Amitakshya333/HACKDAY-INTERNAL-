@@ -2,7 +2,7 @@
  * MAOS Oasis Terminal User Interface (TUI)
  *
  * Enterprise-grade, ultra-aesthetic, interactive terminal mission control.
- * Matches Antigravity CLI and Herdr level polishing:
+ * Matches Sovereign CLI and Herdr level polishing:
  *   - Real-time GPU VRAM, Temperature & Throughput telemetry
  *   - Live Herdr Multi-Pane Swarm Matrix
  *   - Gemma Inference Playground & Model Switcher (2B ↔ 9B)
@@ -108,7 +108,9 @@ function terminalCellWidth(value: string): number {
       points.includes(0x20e3) ||
       points.filter((value) => value >= 0x1f1e6 && value <= 0x1f1ff).length === 2 ||
       (point >= 0x1f300 && point <= 0x1faff) ||
-      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(point) ||
+      [0x2705, 0x2728, 0x274c, 0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf].includes(
+        point,
+      ) ||
       (hasVS16 && [0x26a0, 0x2699, 0x26d4, 0x26a1, 0x267f].includes(point)) ||
       (!hasVS16 && [0x26a1, 0x26d4, 0x267f].includes(point));
     width += wide || emojiPresentation ? 2 : 1;
@@ -817,25 +819,25 @@ export class MaosTui {
       }
 
       // Mouse Wheel Vertical Scrolling (supported across modern terminal emulators)
-      if (str && (str.includes('<64;') || str.includes('\x1b[<64;'))) {
+      if (str && (str.includes('<64;') || str.includes('\x1b[<64;') || str.startsWith('\x1b[M\x60'))) {
         this.scrollUpCurrentView(3);
         return;
       }
-      if (str && (str.includes('<65;') || str.includes('\x1b[<65;'))) {
+      if (str && (str.includes('<65;') || str.includes('\x1b[<65;') || str.startsWith('\x1b[M\x61'))) {
         this.scrollDownCurrentView(3);
         return;
       }
 
       // Global Direct Ctrl Shortcuts (Work universally from any view, including chat/input)
-      if (key.ctrl && key.name === 'p') {
+      if ((key.ctrl && key.name === 'p') || str === '\x10') {
         this.previewArtifacts();
         return;
       }
-      if (key.ctrl && key.name === 'g') {
+      if ((key.ctrl && key.name === 'g') || str === '\x07') {
         this.cycleModel();
         return;
       }
-      if (key.ctrl && key.name === 'r') {
+      if ((key.ctrl && key.name === 'r') || str === '\x12') {
         void this.updateHerdrTelemetry();
         void this.refreshDetectedModels();
         this.statusMessage = 'Swarm roster and telemetry refreshed.';
@@ -844,7 +846,7 @@ export class MaosTui {
       }
 
       // Prefix Key Toggle (Ctrl+B standard matching tmux, cmux, and herdr)
-      if (key.ctrl && (key.name === 'b' || str === '\x02')) {
+      if ((key.ctrl && (key.name === 'b' || str === '\x02')) || str === '\x02') {
         this.prefixActive = !this.prefixActive;
         if (this.prefixTimeout) {
           clearTimeout(this.prefixTimeout);
@@ -856,7 +858,8 @@ export class MaosTui {
             this.prefixTimeout = null;
             this.render();
           }, 4000);
-          this.statusMessage = 'PREFIX MODE ACTIVE: [P] Preview · [G] Model · [R] Refresh · [I] Ignite · [0-5] Tab · [Esc] Cancel';
+          this.statusMessage =
+            'PREFIX MODE ACTIVE: [P] Preview · [G] Model · [R] Refresh · [I] Ignite · [0-5] Tab · [Esc] Cancel';
         } else {
           this.statusMessage = 'Prefix mode deactivated.';
         }
@@ -871,61 +874,62 @@ export class MaosTui {
           clearTimeout(this.prefixTimeout);
           this.prefixTimeout = null;
         }
-        if (key.name === 'escape') {
+        const actionKey = (key.name || str || '').toLowerCase();
+        if (actionKey === 'escape') {
           this.statusMessage = 'Prefix command cancelled.';
           this.render();
           return;
         }
-        if (key.name === 'p' || key.name === 'o') {
+        if (actionKey === 'p' || actionKey === 'o') {
           this.previewArtifacts();
           return;
         }
-        if (key.name === 'g') {
+        if (actionKey === 'g') {
           this.cycleModel();
           return;
         }
-        if (key.name === 'r') {
+        if (actionKey === 'r') {
           void this.updateHerdrTelemetry();
           void this.refreshDetectedModels();
           this.statusMessage = 'Swarm roster and telemetry refreshed.';
           this.render();
           return;
         }
-        if (key.name === 'i') {
+        if (actionKey === 'i') {
           this.modalMode = 'ignite';
           this.modalInputText = 'Build and deploy Canva 3D Spatial Studio';
           this.render();
           return;
         }
-        if (['0', '1', '2', '3', '4', '5'].includes(key.name) || ['0', '1', '2', '3', '4', '5'].includes(str)) {
-          const target = parseInt(key.name || str, 10);
+        if (['0', '1', '2', '3', '4', '5'].includes(actionKey)) {
+          const target = parseInt(actionKey, 10);
           this.activeTab = target;
           this.statusMessage = `Switched to View [${this.activeTab}].`;
           this.render();
           return;
         }
-        if (key.name === 'c') {
+        if (actionKey === 'c') {
           this.activeTab = 2;
           this.statusMessage = 'Switched to View [2] — Local Chat.';
           this.render();
           return;
         }
-        if (key.name === 's') {
+        if (actionKey === 's') {
           this.loadWorkplaceConfig();
           this.activeTab = 0;
           this.statusMessage = 'Switched to View [0] — Settings.';
           this.render();
           return;
         }
-        if (key.name === 'pageup' || key.name === 'up' || key.name === 'k') {
+        if (actionKey === 'pageup' || actionKey === 'up' || actionKey === 'k') {
           this.scrollUpCurrentView();
           return;
         }
-        if (key.name === 'pagedown' || key.name === 'down' || key.name === 'j') {
+        if (actionKey === 'pagedown' || actionKey === 'down' || actionKey === 'j') {
           this.scrollDownCurrentView();
           return;
         }
-        this.statusMessage = `Prefix ignored for key '${key.name || str}'.`;
+        this.statusMessage = `Prefix ignored for key '${actionKey}'.`;
         this.render();
         return;
       }
@@ -957,8 +961,10 @@ export class MaosTui {
           } else if (key.name === 'end') {
             this.transcriptScrollOffset = 0;
           } else {
-            const step = Math.max(1, this.transcriptViewportRows - 1);
-            this.transcriptScrollOffset += key.name === 'pageup' ? step : -step;
+            const isUp = key.name === 'pageup' || key.name === 'up';
+            const step =
+              key.name === 'pageup' || key.name === 'pagedown' ? Math.max(1, this.transcriptViewportRows - 1) : 3;
+            this.transcriptScrollOffset += isUp ? step : -step;
             this.transcriptScrollOffset = Math.max(
               0,
               Math.min(
@@ -1095,8 +1101,10 @@ export class MaosTui {
           } else if (key.name === 'end') {
             this.transcriptScrollOffset = 0;
           } else {
-            const step = Math.max(1, this.transcriptViewportRows - 1);
-            this.transcriptScrollOffset += key.name === 'pageup' ? step : -step;
+            const isUp = key.name === 'pageup' || key.name === 'up';
+            const step =
+              key.name === 'pageup' || key.name === 'pagedown' ? Math.max(1, this.transcriptViewportRows - 1) : 3;
+            this.transcriptScrollOffset += isUp ? step : -step;
             this.transcriptScrollOffset = Math.max(
               0,
               Math.min(
@@ -1177,8 +1185,9 @@ export class MaosTui {
           } else if (key.name === 'end') {
             this.chatScrollOffset = 0;
           } else {
-            const step = Math.max(1, this.chatViewportRows - 1);
-            this.chatScrollOffset += key.name === 'pageup' ? step : -step;
+            const isUp = key.name === 'pageup' || key.name === 'up';
+            const step = key.name === 'pageup' || key.name === 'pagedown' ? Math.max(1, this.chatViewportRows - 1) : 3;
+            this.chatScrollOffset += isUp ? step : -step;
             this.chatScrollOffset = Math.max(
               0,
               Math.min(this.chatScrollOffset, Math.max(0, this.chatRenderedRowCount - this.chatViewportRows)),
@@ -1194,7 +1203,7 @@ export class MaosTui {
         }
       }
 
-      // If on Tab 3 (Antigravity Swarm Board):
+      // If on Tab 3 (Swarm Board):
       if (this.activeTab === 3) {
         if (key.name === 'tab') {
           this.activeTab = key.shift ? this.getPrevTab(3) : this.getNextTab(3);
@@ -1238,6 +1247,10 @@ export class MaosTui {
           void this.refreshDetectedModels();
           this.statusMessage = 'Swarm roster and telemetry refreshed.';
           this.render();
+          return;
+        }
+        if (key.name === 'g' || str?.toLowerCase() === 'g') {
+          this.cycleModel();
           return;
         }
         if (['1', '2', '3', '4', '5'].includes(key.name)) {
@@ -2186,8 +2199,14 @@ export class MaosTui {
         }
       });
 
-      server.on('error', () => {
-        // Fallback silently if port already bound
+      server.on('error', (err: any) => {
+        if (err?.code === 'EADDRINUSE' && this.previewPort < 3040) {
+          this.previewPort++;
+          try {
+            server.close();
+          } catch {}
+          server.listen(this.previewPort, '127.0.0.1');
+        }
       });
 
       server.listen(this.previewPort, '127.0.0.1', () => {});
@@ -2581,12 +2600,8 @@ export class MaosTui {
         : this.activeTab === 1
           ? [
               `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
-              `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
-              `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
-              `${c.boldWhite('P')} ${c.emerald('Preview')}`,
-              ...(hasTranscriptSession ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
-              `${c.boldWhite('Esc')} ${c.slateMuted('Clear')}`,
-              `${c.boldWhite('G')} ${c.amber(
+              `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
+              `${c.boldWhite('Ctrl+G')} ${c.amber(
                 `Model ${
                   this.selectedModel
                     .split('/')
@@ -2594,17 +2609,18 @@ export class MaosTui {
                     ?.replace(/^gemma2?:?/i, '') || this.selectedModel
                 }`,
               )}`,
+              `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
+              `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+              ...(hasTranscriptSession ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
+              `${c.boldWhite('Esc')} ${c.slateMuted('Clear')}`,
               `${c.cyanBright('/help')} ${c.slateMuted('Commands')}`,
               `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
             ]
           : this.activeTab === 2
             ? [
                 `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
-                `${c.boldWhite('Enter')} ${c.slateMuted('Send Message')}`,
-                `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
-                ...(this.chatMessages.length > 0 ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
-                `${c.boldWhite('Esc')} ${c.slateMuted('Clear')}`,
-                `${c.boldWhite('G')} ${c.amber(
+                `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
+                `${c.boldWhite('Ctrl+G')} ${c.amber(
                   `Model ${
                     this.selectedModel
                       .split('/')
@@ -2612,17 +2628,29 @@ export class MaosTui {
                       ?.replace(/^gemma2?:?/i, '') || this.selectedModel
                   }`,
                 )}`,
-                `${c.boldWhite('P')} ${c.emerald('Preview')}`,
+                `${c.boldWhite('Enter')} ${c.slateMuted('Send Message')}`,
+                `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+                ...(this.chatMessages.length > 0 ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
+                `${c.boldWhite('Esc')} ${c.slateMuted('Clear')}`,
                 `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
               ]
             : this.activeTab === 3
               ? [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
                   `${c.boldWhite('P')} ${c.emerald('Preview')}`,
+                  `${c.boldWhite('G')} ${c.amber(
+                    `Model ${
+                      this.selectedModel
+                        .split('/')
+                        .pop()
+                        ?.replace(/^gemma2?:?/i, '') || this.selectedModel
+                    }`,
+                  )}`,
                   `${c.boldWhite('Enter')} ${c.cyan(this.swarmInspectorExpanded ? 'Collapse' : 'Expand')}`,
                   `${c.boldWhite('R')} ${c.cyanBright('Refresh')}`,
                   `${c.boldWhite('Esc')} ${c.slateMuted('Back')}`,
                   `${c.boldWhite('↑/↓')} ${c.slateMuted('Select Agent')}`,
+                  `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
                   `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
                 ]
               : [
@@ -2684,12 +2712,7 @@ export class MaosTui {
       const start = Math.max(0, end - viewportRows);
       const visibleRows = rows.slice(start, end);
 
-      const scrollBar = this.renderScrollBarTrack(
-        viewportRows,
-        rows.length,
-        this.transcriptScrollOffset,
-        c.cyanBright,
-      );
+      const scrollBar = this.renderScrollBarTrack(viewportRows, rows.length, this.transcriptScrollOffset, c.cyanBright);
 
       const paddingRows = viewportRows - visibleRows.length;
       for (let i = 0; i < paddingRows; i++) {
@@ -2894,7 +2917,7 @@ export class MaosTui {
     lines.push(centerTerminalLine(c.violetBright('╰' + '─'.repeat(Math.max(0, W - 2)) + '╯'), W));
   }
 
-  // ── Tab 3: Antigravity Swarm Board (Mascot + Roster + Posts + Inspector) ────
+  // ── Tab 3: Swarm Board (Mascot + Roster + Posts + Inspector) ────
   private renderTabAgents(lines: string[], W: number, bodyRows?: number): void {
     // Dynamically synchronize model badge
     const modelBadge = formatHeaderBadge(this.selectedModel);
