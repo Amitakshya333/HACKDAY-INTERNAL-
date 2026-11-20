@@ -472,6 +472,12 @@ export function classifyUserInput(input: string): 'chat' | 'swarm_task' {
   return 'swarm_task';
 }
 
+export interface MaosTuiOptions {
+  initialGoal?: string;
+  sessionId?: string;
+  continueSession?: boolean;
+}
+
 export class MaosTui {
   private activeTab: number = 1; // 1: Dashboard, 2: Chat, 3: Agents, 4: Telemetry, 5: Event log, 0: Settings
   private isRunning: boolean = true;
@@ -598,9 +604,15 @@ export class MaosTui {
   };
   private readonly terminateHandler = () => this.exit();
 
-  constructor(projectRoot: string = process.cwd()) {
+  private tuiOptions?: MaosTuiOptions;
+
+  constructor(projectRoot: string = process.cwd(), options?: MaosTuiOptions) {
     this.projectRoot = projectRoot;
+    this.tuiOptions = options;
     this.loadWorkplaceConfig();
+    if (options?.initialGoal) {
+      this.swarmGoal = options.initialGoal;
+    }
     this.swarmAgents = createDefaultSwarmAgents(this.swarmGoal, this.selectedModel);
     this.swarmPosts = createDefaultSwarmPosts(this.swarmGoal);
   }
@@ -1107,6 +1119,15 @@ export class MaosTui {
     // Render loop
     this.render();
     this.startRefreshLoop();
+
+    // Auto-dispatch initial goal if specified via CLI (e.g. maos-oasis "create a snake game")
+    if (this.tuiOptions?.initialGoal) {
+      const goal = this.tuiOptions.initialGoal;
+      this.tuiOptions.initialGoal = undefined;
+      setTimeout(() => {
+        this.launchIgniteGoal(goal);
+      }, 350);
+    }
 
     // Clean exit handlers
     process.on('SIGINT', this.interruptHandler);
@@ -3112,13 +3133,22 @@ export class MaosTui {
   }
 
   private runCliCommand(args: string[], label: string): void {
+    const candidateEntries = [
+      path.join(this.projectRoot, 'dist', 'cli', 'index.js'),
+      path.resolve(__dirname, '..', 'cli', 'index.js'),
+      path.resolve(__dirname, '..', '..', 'dist', 'cli', 'index.js'),
+    ];
     const sourceEntry = path.join(this.projectRoot, 'src', 'cli', 'index.ts');
     const tsxCli = path.join(this.projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const builtEntry = path.join(this.projectRoot, 'dist', 'cli', 'index.js');
+
     if (fs.existsSync(sourceEntry) && fs.existsSync(tsxCli)) {
       this.runExternalProcess(process.execPath, [tsxCli, sourceEntry, ...args], this.projectRoot, label);
-    } else if (fs.existsSync(builtEntry)) {
-      this.runExternalProcess(process.execPath, [builtEntry, ...args], this.projectRoot, label);
+      return;
+    }
+
+    const foundEntry = candidateEntries.find((p) => fs.existsSync(p));
+    if (foundEntry) {
+      this.runExternalProcess(process.execPath, [foundEntry, ...args], this.projectRoot, label);
     } else {
       this.reportCommand('MAOS CLI entrypoint is missing. Reinstall dependencies or build the project.', true);
     }

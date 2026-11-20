@@ -60,6 +60,17 @@ interface ModelInfo {
 
 function getModelInfo(projectRoot: string = process.cwd()): ModelInfo {
   try {
+    const oasisCfgPath = path.join(projectRoot, 'maos-oasis.config.json');
+    if (fs.existsSync(oasisCfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(oasisCfgPath, 'utf-8'));
+      if (cfg.model?.primary || cfg.model?.tag) {
+        return {
+          provider: 'ollama (local loopback)',
+          model: cfg.model.primary || cfg.model.tag,
+          tier: cfg.hardware?.tier || 'high',
+        };
+      }
+    }
     const cfgPath = getConfigPath(projectRoot);
     if (fs.existsSync(cfgPath)) {
       const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
@@ -75,7 +86,7 @@ function getModelInfo(projectRoot: string = process.cwd()): ModelInfo {
   } catch {
     /* ignore */
   }
-  return { provider: 'freemodel', model: 'gpt-5.4', tier: 'low' };
+  return { provider: 'ollama (local loopback)', model: 'gemma2:9b', tier: 'high' };
 }
 
 function getGitBranch(projectRoot: string): string {
@@ -169,7 +180,7 @@ function drawWelcome(projectRoot: string = process.cwd()): void {
   }
 
   process.stdout.write('\n');
-  process.stdout.write(centerText(slate('docker-compose for AI coding agents'), W) + '\n');
+  process.stdout.write(centerText(slate('Sovereign Multi-Agent Coding Swarm · Gemma-First · 100% Loopback'), W) + '\n');
   process.stdout.write('\n');
 
   // ── Input Card ──
@@ -179,7 +190,7 @@ function drawWelcome(projectRoot: string = process.cwd()): void {
   process.stdout.write(cardPad + border('╭' + '─'.repeat(cardW - 2) + '╮') + '\n');
 
   // Placeholder line
-  const ph = 'Ask the fleet anything... "Build a login page"';
+  const ph = 'Ask the swarm anything... "Build me a tic tac toe game"';
   const phFill = Math.max(0, cardW - 6 - ph.length);
   process.stdout.write(
     cardPad + border('│ ') + amber('┃') + chalk.gray(` ${ph}`) + ' '.repeat(phFill) + border(' │') + '\n',
@@ -923,7 +934,12 @@ export function runRepl(projectRoot: string = process.cwd()): void {
         // ── System ──────────────────────────────────────────
         case 'doctor':
         case 'doc':
-          showOutput('doctor', await capture(async () => { await runDoctor(cwd); }));
+          showOutput(
+            'doctor',
+            await capture(async () => {
+              await runDoctor(cwd);
+            }),
+          );
           break;
 
         case 'login': {

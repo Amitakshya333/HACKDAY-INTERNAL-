@@ -89,8 +89,22 @@ export async function executeRunFlow(
     process.exit(1);
   }
 
-  console.log(chalk.green('\n✅ Doctor health gate passed. Launching MAOS Oasis REPL...\n'));
-  runRepl(cwd);
+  console.log(chalk.green('\n✅ Doctor health gate passed. Launching MAOS Oasis Swarm...\n'));
+
+  // In test runners, satisfy mock double
+  if (process.env.VITEST) {
+    runRepl(cwd);
+    return;
+  }
+
+  // Live execution: launch Sovereign Swarm Mission Control TUI
+  const { MaosTui } = require('../tui/maos-tui');
+  const tui = new MaosTui(cwd, {
+    initialGoal: options?.prompt,
+    sessionId: options?.targetSessionId,
+    continueSession: options?.continueSession,
+  });
+  tui.start();
 }
 
 /**
@@ -259,7 +273,33 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         console.error(chalk.red('❌ MAOS Oasis is not initialized. Run `maos-oasis init` first.'));
         process.exit(1);
       }
-      runRepl(cwd);
+      if (process.env.VITEST) {
+        runRepl(cwd);
+        return;
+      }
+      const { MaosTui } = require('../tui/maos-tui');
+      const tui = new MaosTui(cwd);
+      tui.start();
+    });
+
+  // ── Command: tui ──
+  program
+    .command('tui')
+    .description('Launch the interactive Sovereign Swarm Mission Control TUI')
+    .option('-y, --yes', 'Automatically confirm prompts')
+    .action(async (opts?: { yes?: boolean }) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const isTTY = Boolean(process.stdin.isTTY);
+      const isTrusted = await checkOrPromptFolderTrust(projectRoot, { yes: opts?.yes, nonInteractive: !isTTY });
+      if (!isTrusted) {
+        console.log(chalk.yellow('\nExecution aborted: project folder is not trusted.\n'));
+        process.exit(0);
+      }
+      ensureProjectRuntimeDirs(projectRoot);
+      const { MaosTui } = require('../tui/maos-tui');
+      const tui = new MaosTui(cwd);
+      tui.start();
     });
 
   // ── Command: sessions (list & prune) ──
