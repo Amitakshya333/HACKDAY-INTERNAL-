@@ -55,6 +55,7 @@ export interface GemmaModelSpec {
 }
 
 export const OPENCODE_GEMMA_MODELS: Record<string, GemmaModelSpec> = {
+  'gemma4:e2b': { tag: 'gemma4:e2b', vram: '~4.6 GB Q4_K_M', role: 'multimodal reasoning / thinking / tools' },
   'gemma2:2b': { tag: 'gemma2:2b', vram: '~1.8 GB Q4_K_M', role: 'triage / task-decomposition, 70+ tok/s' },
   'gemma2:9b': { tag: 'gemma2:9b', vram: '~5.2 GB Q4_K_M', role: 'primary reasoning / codegen' },
   'gemma3:4b': { tag: 'gemma3:4b', vram: '~2.8 GB Q4_K_M', role: 'balanced triage + codegen' },
@@ -100,7 +101,7 @@ export const OPENCODE_HARNESS_ADDENDUM = [
   '- Before write_file, state the exact diff intent (file, lines, behavior change).',
   '- After write_file, run_command (tsc / tests / build) to verify. Fix failures',
   '  before calling task_complete. Red output is a repair signal, not a stop signal.',
-  '- Keep edits scoped to the task branch and allowed scope. Do not touch other panes\' worktrees.',
+  "- Keep edits scoped to the task branch and allowed scope. Do not touch other panes' worktrees.",
   '- Prefer small verifiable patches over large rewrites. Commit with git_commit when green.',
 ].join('\n');
 
@@ -169,7 +170,11 @@ export class OpenCodeGemmaProvider implements IProvider {
     return [{ role: 'system', content: OPENCODE_HARNESS_ADDENDUM }, ...messages];
   }
 
-  async generate(messages: ChatMessage[], tools?: ToolDef[], options?: ProviderRequestOptions): Promise<ProviderResponse> {
+  async generate(
+    messages: ChatMessage[],
+    tools?: ToolDef[],
+    options?: ProviderRequestOptions,
+  ): Promise<ProviderResponse> {
     try {
       return await this.inner.generate(this.withHarness(messages), tools, options);
     } catch (err: unknown) {
@@ -284,7 +289,9 @@ export class OpenCodeGemmaProvider implements IProvider {
     });
     if (out.error) throw out.error;
     if (out.status !== 0) {
-      throw new Error(`opencode CLI failed (exit ${out.status}): ${(out.stderr || out.stdout || '').substring(0, 2000)}`);
+      throw new Error(
+        `opencode CLI failed (exit ${out.status}): ${(out.stderr || out.stdout || '').substring(0, 2000)}`,
+      );
     }
     return out.stdout || '';
   }
@@ -321,7 +328,12 @@ export function registerOpenCodeGemmaProviders(): void {
             baseURL: typeof cfg['baseURL'] === 'string' ? (cfg['baseURL'] as string) : undefined,
             apiKey: typeof cfg['apiKey'] === 'string' ? (cfg['apiKey'] as string) : undefined,
           }),
-        { name: 'opencode-gemma', version: '1.0.0', type: 'provider', description: 'OpenCode harness + local Gemma via Ollama' },
+        {
+          name: 'opencode-gemma',
+          version: '1.0.0',
+          type: 'provider',
+          description: 'OpenCode harness + local Gemma via Ollama',
+        },
       );
     }
     if (!registry.hasProvider('opencode-qwen')) {
@@ -333,7 +345,12 @@ export function registerOpenCodeGemmaProviders(): void {
             baseURL: typeof cfg['baseURL'] === 'string' ? (cfg['baseURL'] as string) : undefined,
             apiKey: typeof cfg['apiKey'] === 'string' ? (cfg['apiKey'] as string) : undefined,
           }),
-        { name: 'opencode-qwen', version: '1.0.0', type: 'provider', description: 'OpenCode harness + local Qwen fallback via Ollama' },
+        {
+          name: 'opencode-qwen',
+          version: '1.0.0',
+          type: 'provider',
+          description: 'OpenCode harness + local Qwen fallback via Ollama',
+        },
       );
     }
   } catch {

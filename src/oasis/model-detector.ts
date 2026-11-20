@@ -312,13 +312,35 @@ export async function detectLocalModels(options?: {
   for (const fallback of FALLBACK_MODELS) {
     const key = fallback.id.toLowerCase();
     if (!seen.has(key)) {
-      // Don't add all fallbacks if we have live models, but keep gemma2:9b and gemma2:2b available
-      if (fallback.id.startsWith('gemma2:')) {
+      // Keep all Gemma family models (gemma4:e2b, gemma2:9b, gemma2:2b) available as fallbacks
+      if (fallback.id.startsWith('gemma') || fallback.family?.startsWith('gemma')) {
         combined.push(fallback);
         seen.add(key);
       }
     }
   }
+
+  // Prioritize primary executable models:
+  // 1. gemma4:e2b
+  // 2. gemma2:9b
+  // 3. gemma2:2b
+  // 4. other gemma models
+  // 5. other Ollama models
+  // 6. disk/huggingface models
+  const modelPriority = (m: DetectedModel): number => {
+    const id = m.id.toLowerCase();
+    if (id.startsWith('gemma4:e2b')) return 1;
+    if (id.startsWith('gemma2:9b')) return 2;
+    if (id.startsWith('gemma2:2b')) return 3;
+    if (id.startsWith('gemma3:')) return 4;
+    if (id.startsWith('gemma')) return 5;
+    if (m.source === 'ollama') return 10;
+    if (id.includes('qwen2.5-coder')) return 20;
+    if (m.family === 'qwen' || id.includes('qwen')) return 30;
+    return 40;
+  };
+
+  combined.sort((a, b) => modelPriority(a) - modelPriority(b));
 
   return combined;
 }
