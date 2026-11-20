@@ -959,6 +959,13 @@ export class MaosTui {
           this.scrollDownCurrentView(3);
           return true;
         }
+      } else {
+        // Welcome home screen: clicking bottom prompt input row focuses it
+        if (row >= bodyStartRow + bodyRows - 3) {
+          this.statusMessage = 'Ready. Type a goal or slash command; /help lists commands.';
+          this.render();
+          return true;
+        }
       }
       return false;
     }
@@ -1014,6 +1021,37 @@ export class MaosTui {
         return true;
       }
       return false;
+    }
+
+    // Tab 4: Telemetry
+    if (this.activeTab === 4) {
+      if (row >= bodyStartRow && row <= bodyStartRow + 8) {
+        void this.updateHerdrTelemetry();
+        this.updateGpuTelemetry();
+        this.statusMessage = 'GPU and system telemetry refreshed.';
+        this.render();
+        return true;
+      }
+      if (col >= mainW - 3 && col <= mainW) {
+        this.cycleModel();
+        return true;
+      }
+      if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+        this.scrollUpCurrentView(3);
+      } else {
+        this.scrollDownCurrentView(3);
+      }
+      return true;
+    }
+
+    // Tab 5: Event Log
+    if (this.activeTab === 5) {
+      if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+        this.scrollUpCurrentView(4);
+      } else {
+        this.scrollDownCurrentView(4);
+      }
+      return true;
     }
 
     // Tab 0: Settings
@@ -1662,12 +1700,20 @@ export class MaosTui {
           this.render();
           return;
         }
-        // PageUp / PageDown / Home / End scroll the live transcript on View 1:
+        // PageUp / PageDown / Home / End / Up / Down scroll the live transcript on View 1:
         if (
-          ['pageup', 'pagedown', 'home', 'end'].includes(key.name) &&
+          ['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) &&
           this.activeTab === 1 &&
           this.transcript.length > 0
         ) {
+          if (key.ctrl && key.name === 'up') {
+            this.scrollUpCurrentView(3);
+            return;
+          }
+          if (key.ctrl && key.name === 'down') {
+            this.scrollDownCurrentView(3);
+            return;
+          }
           if (key.name === 'home') {
             this.transcriptScrollOffset = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
           } else if (key.name === 'end') {
@@ -3210,9 +3256,14 @@ export class MaosTui {
   }
 
   private scrollUpCurrentView(step?: number): void {
-    if (this.activeTab === 1 && this.transcriptRenderedRowCount > this.transcriptViewportRows) {
+    if (
+      this.activeTab === 1 &&
+      (this.transcriptRenderedRowCount > this.transcriptViewportRows || this.transcript.length > 5)
+    ) {
       const delta = step || Math.max(1, this.transcriptViewportRows - 1);
-      const maxScroll = Math.max(0, this.transcriptRenderedRowCount - this.transcriptViewportRows);
+      const total = this.transcriptRenderedRowCount || this.transcript.length;
+      const vp = this.transcriptViewportRows || 20;
+      const maxScroll = Math.max(0, total - vp);
       this.transcriptScrollOffset = Math.min(maxScroll, this.transcriptScrollOffset + delta);
       this.render();
     } else if (this.activeTab === 2 && this.chatRenderedRowCount > this.chatViewportRows) {
@@ -3231,7 +3282,10 @@ export class MaosTui {
   }
 
   private scrollDownCurrentView(step?: number): void {
-    if (this.activeTab === 1 && this.transcriptRenderedRowCount > this.transcriptViewportRows) {
+    if (
+      this.activeTab === 1 &&
+      (this.transcriptRenderedRowCount > this.transcriptViewportRows || this.transcript.length > 5)
+    ) {
       const delta = step || Math.max(1, this.transcriptViewportRows - 1);
       this.transcriptScrollOffset = Math.max(0, this.transcriptScrollOffset - delta);
       this.render();

@@ -615,6 +615,7 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
     'profiles',
     'rust',
     'maos-website',
+    'apps',
   ]);
 
   const scanDir = (dir: string, baseDir: string, workerId: string) => {
@@ -741,7 +742,9 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
 
   // Promote nested index.html (e.g. tictactoe/index.html) to root output/index.html if missing
   if (!filesMap.has('index.html')) {
-    const nestedHtml = Array.from(filesMap.values()).find((f) => f.path.endsWith('index.html'));
+    const nestedHtml = Array.from(filesMap.values()).find(
+      (f) => f.path.endsWith('index.html') && !f.path.startsWith('apps/'),
+    );
     if (nestedHtml) {
       const srcFile = path.join(outputDir, nestedHtml.path);
       const rootHtml = path.join(outputDir, 'index.html');
@@ -767,8 +770,8 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
   const rootIndex = files.find((f) => f.path === 'index.html');
   const nonAppIndex = files.find((f) => f.path.endsWith('/index.html') && !f.path.startsWith('apps/'));
   const nonAppHtml = files.find((f) => f.path.endsWith('.html') && !f.path.startsWith('apps/'));
-  const anyIndex = files.find((f) => f.path.endsWith('index.html'));
-  const anyHtml = files.find((f) => f.path.endsWith('.html'));
+  const anyIndex = files.find((f) => f.path.endsWith('index.html') && !f.path.startsWith('apps/'));
+  const anyHtml = files.find((f) => f.path.endsWith('.html') && !f.path.startsWith('apps/'));
   const htmlFile = rootIndex || nonAppIndex || nonAppHtml || anyIndex || anyHtml;
   if (htmlFile) {
     entrypoint = path.join('output', htmlFile.path);
@@ -887,7 +890,11 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   try {
     const { provider, label } = resolveIgniteProvider(options, cwd);
     modelLabel = label;
-    const result = await decompose(provider, effectiveGoal, roster, cwd);
+    const result = await decompose(provider, effectiveGoal, roster, cwd, {
+      rejectedGoal: disambiguation.rejectedGoal,
+      previousGoals,
+      isCorrection: disambiguation.isCorrection,
+    });
     subtasks = result.tasks.slice(0, maxPanes);
     spinner.succeed(chalk.green(`Decomposed into ${subtasks.length} subtasks (${label})`));
   } catch (err: unknown) {
@@ -1032,6 +1039,9 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
         '--color',
         color,
       ];
+      if (disambiguation.isCorrection && disambiguation.rejectedGoal) {
+        workerArgs.push('--rejected-goal', disambiguation.rejectedGoal);
+      }
       if (options.provider) {
         workerArgs.push('--provider', options.provider);
       }

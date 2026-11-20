@@ -44,6 +44,7 @@ if (taskFile && fs.existsSync(taskFile)) {
 const worktreePath = path.resolve(getArg('--worktree', process.cwd()));
 const colorHex = getArg('--color', '#8B5CF6');
 const provider = getArg('--provider', 'ollama');
+const rejectedGoal = getArg('--rejected-goal', '');
 
 const OLLAMA_HOST = process.env.MAOS_OLLAMA_HOST || '127.0.0.1';
 const OLLAMA_PORT = parseInt(process.env.MAOS_OLLAMA_PORT || '11434', 10);
@@ -983,6 +984,61 @@ export class ${className} {
 export function createInstance(opts) {
   return new ${className}(opts);
 }
+
+// Interactive Sovereign App Client Mounting
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const display = document.getElementById('display-area');
+    const controls = document.getElementById('controls-area');
+    const app = new ${className}();
+    app.initialize();
+
+    if (display) {
+      display.innerHTML = \`
+        <div style="padding: 20px; font-family: monospace;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+            <span style="color: #10b981; font-weight: bold;">● RUNNING (Sovereign Local)</span>
+            <span style="color: #64748b;">MAOS Edge Engine</span>
+          </div>
+          <div id="app-output" style="background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 8px; padding: 16px; min-height: 180px; overflow-y: auto;">
+            <div style="color: #38bdf8; font-weight: bold; margin-bottom: 8px;">🚀 \${app.name} Active</div>
+            <div style="color: #94a3b8; font-size: 13px;">Goal: \${app.goal}</div>
+            <div style="color: #34d399; font-size: 12px; margin-top: 8px;">✔ State store initialized and ready.</div>
+          </div>
+        </div>
+      \`;
+    }
+
+    if (controls) {
+      controls.innerHTML = \`
+        <div style="display: flex; gap: 10px; margin-top: 12px; padding: 0 20px;">
+          <button id="btn-run" style="background: #0284c7; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">⚡ Execute Operation</button>
+          <button id="btn-reset" style="background: #334155; color: #f8fafc; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">🔄 Reset State</button>
+        </div>
+      \`;
+      const btnRun = document.getElementById('btn-run');
+      const btnReset = document.getElementById('btn-reset');
+      const out = document.getElementById('app-output');
+      if (btnRun && out) {
+        btnRun.addEventListener('click', () => {
+          const res = app.execute('user_action', { timestamp: Date.now() });
+          const row = document.createElement('div');
+          row.style.color = '#34d399';
+          row.style.fontSize = '12px';
+          row.style.marginTop = '4px';
+          row.textContent = \`✔ [\${new Date().toLocaleTimeString()}] Action executed: status=\${res.status}, stateCount=\${res.stateSize}\`;
+          out.appendChild(row);
+        });
+      }
+      if (btnReset && out) {
+        btnReset.addEventListener('click', () => {
+          app.state.clear();
+          out.innerHTML = \`<div style="color: #f59e0b; font-size: 12px;">State cleared. Ready for next input.</div>\`;
+        });
+      }
+    }
+  });
+}
 `,
   });
 
@@ -1083,6 +1139,73 @@ header h1 { color: #38bdf8; font-size: 24px; margin-bottom: 8px; }
   return files;
 }
 
+/**
+ * Extract markdown code blocks with explicit or inferred file paths from LLM text responses.
+ * Enables small local models (Gemma 2B/9B) to write files via standard markdown code fences.
+ */
+function extractMarkdownCodeBlocks(
+  text: string,
+  targetGoal: string,
+  targetTask: string,
+): Array<{ path: string; content: string }> {
+  const results: Array<{ path: string; content: string }> = [];
+  const seenPaths = new Set<string>();
+
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    // Check if line indicates a filename
+    const fileMatch = line.match(
+      /(?:file|path|filename|create|write|in)?[:\s*#`]+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`*:]*/i,
+    );
+    let filePath = fileMatch ? fileMatch[1].replace(/^[./]+/, '') : '';
+
+    if (line.startsWith('```')) {
+      const headerPathMatch = line.match(
+        /```[a-zA-Z0-9_-]*\s+(?:path=|file=)?["']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)["']?/i,
+      );
+      if (headerPathMatch) {
+        filePath = headerPathMatch[1].replace(/^[./]+/, '');
+      }
+      const blockLines: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim().startsWith('```')) {
+        blockLines.push(lines[j]);
+        j++;
+      }
+      i = j;
+
+      if (!filePath && blockLines.length > 2) {
+        const lang = line.slice(3).trim().toLowerCase();
+        const headerBlock = blockLines.slice(0, 5).join(' ').toLowerCase();
+        if (
+          lang === 'html' ||
+          headerBlock.includes('<!doctype') ||
+          headerBlock.includes('<html') ||
+          headerBlock.includes('<head>') ||
+          headerBlock.includes('<body>')
+        ) {
+          filePath = 'index.html';
+        } else if (lang === 'css' || blockLines.some((l) => l.includes('{') && l.includes('margin:'))) {
+          filePath = 'style.css';
+        } else if (lang === 'js' || lang === 'javascript') {
+          filePath =
+            targetTask.toLowerCase().includes('logic') || targetGoal.toLowerCase().includes('game')
+              ? 'game.js'
+              : `${targetTask.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.js`;
+        }
+      }
+
+      if (filePath && blockLines.length > 0 && !seenPaths.has(filePath)) {
+        seenPaths.add(filePath);
+        results.push({ path: filePath, content: blockLines.join('\n') });
+      }
+    }
+  }
+
+  return results;
+}
+
 async function main() {
   const W = Math.max(50, Math.min(process.stdout.columns || 65, 80));
 
@@ -1145,13 +1268,21 @@ Rules:
 1. Reason over what architecture and files are required for the goal: "${goal}".
 2. Figure out WHAT to do and WHY, then immediately execute HOW using create_file action blocks.
 3. Write complete, functional, production-ready code with no placeholder stubs.
-4. Call task_complete when all work is finished.`;
+4. Call task_complete when all work is finished.${
+    rejectedGoal
+      ? `\n5. CRITICAL NEGATION CONSTRAINT: The user explicitly REJECTED "${rejectedGoal}". Under NO circumstances should you produce any files, logic, assets, or references related to "${rejectedGoal}". Focus strictly on "${goal}".`
+      : ''
+  }`;
+
+  const userInstruction = rejectedGoal
+    ? `Begin implementing "${taskTitle}" for goal "${goal}". (NOTE: The user explicitly REJECTED "${rejectedGoal}". Do NOT create any assets or logic for "${rejectedGoal}".) Figure out the necessary files and create them now using create_file action blocks.`
+    : `Begin implementing "${taskTitle}" for goal "${goal}". Figure out the necessary files and create them now using create_file action blocks.`;
 
   const messages: StreamMessage[] = [
     { role: 'system', content: systemPrompt },
     {
       role: 'user',
-      content: `Begin implementing "${taskTitle}" for goal "${goal}". Figure out the necessary files and create them now using create_file action blocks.`,
+      content: userInstruction,
     },
   ];
 
@@ -1210,7 +1341,30 @@ Rules:
         content: `[Tool Execution Results]:\n${toolResults.join('\n')}\n\nContinue implementation, run verification commands with run_command, or call task_complete when finished.`,
       });
     } else {
-      // Model returned text without tool calls
+      // Model returned text without structured tool calls
+      // 1. Extract any markdown code blocks containing file implementations
+      const extractedFiles = extractMarkdownCodeBlocks(streamRes.text, goal, taskTitle);
+      if (extractedFiles.length > 0) {
+        console.log(chalk.bold.hex(colorHex)('🔨 Applying Code Blocks Generated by Model...'));
+        for (const ef of extractedFiles) {
+          const fullPath = path.join(worktreePath, ef.path);
+          if (!fs.existsSync(fullPath)) {
+            console.log(chalk.cyan(`  ⚡ [Extracted Block] create_file: ${ef.path}`));
+            const { result } = executeTool(
+              'create_file',
+              { path: ef.path, content: ef.content },
+              worktreePath,
+              ['/'],
+              agentId,
+              taskTitle,
+            );
+            console.log(chalk.green(`     ✔ Created ${ef.path} (${ef.content.split('\n').length} lines)`));
+            toolsExecuted++;
+          }
+        }
+      }
+
+      // 2. Fall back to dynamic goal scaffolding if no files were created
       if (turn === 1 && toolsExecuted === 0) {
         console.log(chalk.yellow('  ⚠️  Model produced plan without structured tool calls.'));
         console.log(chalk.cyan('  ⚡ Activating autonomous dynamic scaffolding for task...'));

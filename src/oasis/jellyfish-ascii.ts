@@ -58,109 +58,103 @@ export const palette = {
   boldWhite: color.bold.hex('#FFFFFF'),
 };
 
+function mirrorChar(ch: string): string {
+  if (ch === '(') return ')';
+  if (ch === ')') return '(';
+  if (ch === '/') return '\\';
+  if (ch === '\\') return '/';
+  if (ch === '<') return '>';
+  if (ch === '>') return '<';
+  if (ch === '{') return '}';
+  if (ch === '}') return '{';
+  if (ch === '[') return ']';
+  if (ch === ']') return '[';
+  return ch;
+}
+
 // Compact Jellyfish Mascot dynamically simulated with Aurelia aurita physics:
 // - Curved umbrella crown apex contracting and expanding symmetrically with squeeze(t)
 // - Translucent bell canopy with horseshoe gonad arches
 // - Signature cloverleaf horseshoe gonads glowing brightly during contraction stroke
 // - Scalloped dynamic undulating rim margin with travelling sinusoidal phase wave
 // - 4 trailing marginal tentacles with wave lag and 2 central frilled oral mouth arms
+// - 100% mathematically and visually symmetrical across the central vertical axis
 export function generateCompactJellyfishRawFrame(t = 0, cols = 20, rows = 8): string {
   const c = squeeze(t);
-  const drift = 0.2 * Math.sin((2 * Math.PI * t) / (5 * P));
-  const cx = (cols - 1) / 2 + drift;
   const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
-
+  const halfCols = Math.floor(cols / 2);
   const rimRow = Math.max(2, Math.min(rows - 3, 3));
 
   // Row 0: Smooth arched crown apex
-  const w0 = Math.max(3, Math.round(5.0 - 1.0 * c));
-  const l0 = Math.max(0, Math.round(cx - w0));
-  const r0 = Math.min(cols - 1, Math.round(cx + w0));
-  grid[0][l0] = '.';
-  grid[0][r0] = '.';
-  for (let x = l0 + 1; x < r0; x++) grid[0][x] = '-';
+  const apexIndent = c > 0.5 ? 5 : 4;
+  grid[0][apexIndent] = '.';
+  for (let x = apexIndent + 1; x < halfCols; x++) {
+    grid[0][x] = '-';
+  }
 
   // Row 1: Upper bell curve and horseshoe gonad lobes
-  const w1 = Math.max(5, Math.round(7.2 - 1.2 * c));
-  const l1 = Math.max(0, Math.round(cx - w1));
-  const r1 = Math.min(cols - 1, Math.round(cx + w1));
-  grid[1][l1] = '.';
-  if (l1 + 1 < cols) grid[1][l1 + 1] = '-';
-  if (l1 + 2 < cols) grid[1][l1 + 2] = "'";
-  grid[1][r1] = '.';
-  if (r1 - 1 >= 0) grid[1][r1 - 1] = '-';
-  if (r1 - 2 >= 0) grid[1][r1 - 2] = "'";
-
-  const glow = c > 0.6 ? '*' : '+';
-  const g1Char = c > 0.5 ? glow : ':';
-  grid[1][Math.round(cx - 3.5)] = '(';
-  grid[1][Math.round(cx - 2.5)] = g1Char;
-  grid[1][Math.round(cx - 1.5)] = ')';
-  grid[1][Math.round(cx + 1.5)] = '(';
-  grid[1][Math.round(cx + 2.5)] = g1Char;
-  grid[1][Math.round(cx + 3.5)] = ')';
+  const bellIndent = c > 0.5 ? 3 : 2;
+  grid[1][bellIndent] = '.';
+  grid[1][bellIndent + 1] = '-';
+  grid[1][bellIndent + 2] = "'";
+  const glow = c > 0.6 ? '*' : c > 0.3 ? '+' : ':';
+  const lobeStart = c > 0.5 ? 6 : 5;
+  grid[1][lobeStart] = '(';
+  grid[1][lobeStart + 1] = glow;
+  grid[1][lobeStart + 2] = ')';
 
   // Row 2: Mid bell with cloverleaf horseshoe gonads
-  const w2 = Math.max(6, Math.round(8.2 - 1.0 * c));
-  const l2 = Math.max(0, Math.round(cx - w2));
-  const r2 = Math.min(cols - 1, Math.round(cx + w2));
-  grid[2][l2] = '(';
-  grid[2][r2] = ')';
-  grid[2][Math.round(cx - 4.5)] = '(';
-  grid[2][Math.round(cx - 3.5)] = glow;
-  grid[2][Math.round(cx - 2.5)] = ')';
-  grid[2][Math.round(cx + 2.5)] = '(';
-  grid[2][Math.round(cx + 3.5)] = glow;
-  grid[2][Math.round(cx + 4.5)] = ')';
+  const midIndent = c > 0.5 ? 2 : 1;
+  grid[2][midIndent] = '(';
+  const midLobeStart = 5;
+  grid[2][midLobeStart] = '(';
+  grid[2][midLobeStart + 1] = glow === '*' ? '*' : '+';
+  grid[2][midLobeStart + 2] = ')';
 
   // Row 3: Scalloped dynamic undulating rim margin
-  const w3 = Math.max(7, Math.round(8.8 - 0.8 * c));
-  const l3 = Math.max(0, Math.round(cx - w3));
-  const r3 = Math.min(cols - 1, Math.round(cx + w3));
-  grid[rimRow][l3] = "'";
-  grid[rimRow][r3] = "'";
-  for (let x = l3 + 1; x < r3; x++) {
-    const wave = Math.sin((x - cx) * 1.5 + t * 4.0);
-    grid[rimRow][x] = wave > 0.3 ? '~' : wave < -0.3 ? "'" : '-';
+  const rimIndent = c > 0.5 ? 2 : 1;
+  grid[rimRow][rimIndent] = "'";
+  for (let x = rimIndent + 1; x < halfCols; x++) {
+    const wave = Math.sin((halfCols - x) * 1.3 + t * 3.5);
+    grid[rimRow][x] = wave > 0.25 ? '~' : wave < -0.25 ? "'" : '-';
   }
 
   // Rows 4 to rows - 1: Trailing marginal tentacles and central frilled oral arms
   for (let y = rimRow + 1; y < rows; y++) {
     const d = y - rimRow;
-    const lagT = t - d * 0.15;
+    const lagT = t - d * 0.18;
+    const wobO = Math.sin(d * 1.0 - lagT * 2.8);
+    const wobI = Math.cos(d * 1.0 - lagT * 2.8);
 
-    // Symmetrical central frilled oral arms
-    const oOffset = 1.2 + 0.3 * Math.cos(d * 0.8 - lagT * 2.5);
-    const oL = Math.round(cx - oOffset);
-    const oR = Math.round(cx + oOffset);
-    if (oL >= 0 && oL < cols) grid[y][oL] = y === rows - 1 ? ':' : ';';
-    if (oR >= 0 && oR < cols) grid[y][oR] = y === rows - 1 ? ':' : ';';
+    if (y === rows - 1) {
+      // Tentacle tips trailing off
+      grid[y][Math.min(halfCols - 1, 4)] = ':';
+      grid[y][Math.min(halfCols - 1, 6)] = ':';
+      grid[y][halfCols - 1] = ':';
+    } else {
+      // Outer tentacle
+      const xOuter = Math.max(1, Math.min(halfCols - 4, Math.round(3 + (wobO > 0.25 ? 1 : wobO < -0.25 ? -1 : 0))));
+      grid[y][xOuter] = wobO < -0.2 ? '/' : wobO > 0.2 ? '(' : '|';
 
-    // 4 Symmetrical outer and inner marginal tentacles
-    const tOuter = 6.2 * (1 - d * 0.06);
-    const tInner = 3.4 * (1 - d * 0.05);
-    const wobO = 0.5 * Math.sin(d * 0.9 - lagT * 2.8);
-    const wobI = 0.5 * Math.cos(d * 0.9 - lagT * 2.8);
-
-    const xOL = Math.round(cx - tOuter + wobO);
-    const xOR = Math.round(cx + tOuter - wobO);
-    const xIL = Math.round(cx - tInner + wobI);
-    const xIR = Math.round(cx + tInner - wobI);
-
-    const setTent = (x: number, isOuter: boolean, isLeft: boolean) => {
-      if (x < 0 || x >= cols || grid[y][x] !== ' ') return;
-      if (y === rows - 1) {
-        grid[y][x] = ':';
-      } else {
-        const sign = isLeft ? -1 : 1;
-        const w = isOuter ? wobO : wobI;
-        grid[y][x] = Math.abs(w) > 0.25 ? (w * sign > 0 ? ')' : '(') : '|';
+      // Inner tentacle
+      const xInner = Math.max(2, Math.min(halfCols - 2, Math.round(6 + (wobI > 0.25 ? 1 : wobI < -0.25 ? -1 : 0))));
+      if (xInner !== xOuter) {
+        grid[y][xInner] = wobI < -0.2 ? '/' : wobI > 0.2 ? '(' : '|';
       }
-    };
-    setTent(xOL, true, true);
-    setTent(xIL, false, true);
-    setTent(xIR, false, false);
-    setTent(xOR, true, false);
+
+      // Central frilled oral arms
+      const oralCol = d === 1 ? 8 : d === 2 ? 8 : 9;
+      grid[y][oralCol] = ';';
+      if (d === 2) grid[y][oralCol + 1] = ';';
+    }
+  }
+
+  // Perfect mathematical reflection of left half across the central vertical axis
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < halfCols; x++) {
+      const oppX = cols - 1 - x;
+      grid[y][oppX] = mirrorChar(grid[y][x]);
+    }
   }
 
   return grid.map((r) => r.join('').padEnd(cols).slice(0, cols)).join('\n');

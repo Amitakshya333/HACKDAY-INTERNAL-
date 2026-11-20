@@ -152,6 +152,12 @@ const DECOMPOSE_TOOL: ToolDef = {
   },
 };
 
+export interface ContinuityContext {
+  rejectedGoal?: string;
+  previousGoals?: string[];
+  isCorrection?: boolean;
+}
+
 // ─── System Prompt ────────────────────────────────────────────
 
 function buildDecomposePrompt(
@@ -159,6 +165,7 @@ function buildDecomposePrompt(
   agentRoster: { id: string; role: string; capabilities: string[]; scope?: string[] }[],
   projectContext?: string,
   telemetryHint?: string,
+  continuity?: ContinuityContext,
 ): string {
   const rosterText = agentRoster
     .map((a) => {
@@ -170,6 +177,18 @@ function buildDecomposePrompt(
   let telemetrySection = '';
   if (telemetryHint) {
     telemetrySection = '\n## Historical Performance Data\n' + telemetryHint + '\n';
+  }
+
+  let continuitySection = '';
+  if (continuity?.previousGoals && continuity.previousGoals.length > 0) {
+    const prev = continuity.previousGoals
+      .slice(-3)
+      .map((g) => `"${g}"`)
+      .join(', ');
+    continuitySection += `\n## Session History & Task Continuity\nPrevious goals executed in this session: ${prev}\n`;
+  }
+  if (continuity?.isCorrection && continuity?.rejectedGoal) {
+    continuitySection += `\n## CRITICAL USER CORRECTION (NEGATIVE CONSTRAINT)\nThe user explicitly rejected: "${continuity.rejectedGoal}".\nDO NOT create any subtasks, files, components, or references related to "${continuity.rejectedGoal}". Build ONLY what is requested for "${goal}".\n`;
   }
 
   return `You are MAOS ARCHITECT — an expert software architect who decomposes high-level goals into atomic, actionable subtasks for a team of AI coding agents.
@@ -204,7 +223,7 @@ Decompose the following goal into atomic subtasks. Each subtask should be:
 - If a task is clearly suited for a specific agent role, tag its category accordingly
 - DO NOT create tasks that require files spanning multiple agent scopes
 - When suggesting file paths, keep them within the scope of the agent best suited for the task
-${projectContext ? '\n## Current Project Context\n' + projectContext : ''}${telemetrySection}
+${projectContext ? '\n## Current Project Context\n' + projectContext : ''}${telemetrySection}${continuitySection}
 ## Goal
 "${goal}"
 
@@ -220,12 +239,14 @@ Call the submit_plan tool with your decomposition. Be thorough but practical.`;
  * @param goal       - The high-level goal (e.g., "Build a todo app with auth")
  * @param agents     - Agent roster from config (for context in the prompt)
  * @param cwd        - Project root for context scanning
+ * @param continuity - Cross-task continuity context and rejection guidance
  */
 export async function decompose(
   provider: IProvider,
   goal: string,
   agents: { id: string; role: string; capabilities: string[]; scope?: string[] }[],
   cwd?: string,
+  continuity?: ContinuityContext,
 ): Promise<DecompositionResult> {
   const logger = createLogger(cwd);
   logger.info('DECOMPOSER', `Decomposing goal: "${goal}"`);
@@ -243,10 +264,14 @@ export async function decompose(
     // No project context available — that's fine
   }
 
-  const systemPrompt = buildDecomposePrompt(goal, agents, projectContext, buildTelemetryHint(cwd));
+  const systemPrompt = buildDecomposePrompt(goal, agents, projectContext, buildTelemetryHint(cwd), continuity);
+  const userContent =
+    continuity?.isCorrection && continuity?.rejectedGoal
+      ? `Decompose this goal into subtasks: "${goal}". (NOTE: The user explicitly rejected building "${continuity.rejectedGoal}". Do NOT generate any subtasks, components, or files for "${continuity.rejectedGoal}".)`
+      : `Decompose this goal into subtasks: "${goal}"`;
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `Decompose this goal into subtasks: "${goal}"` },
+    { role: 'user', content: userContent },
   ];
 
   // Call the model with the structured tool
@@ -258,8 +283,11 @@ export async function decompose(
   }
 
   // ── DIAGNOSTIC: log the full raw response before any parsing ──
-  logger.info('DECOMPOSER', `Model responded in ${response.latencyMs}ms, ${response.usage.totalTokens} tokens`);
-  logger.info('DECOMPOSER', `Finish reason: ${response.finishReason}`);
+  logger.info(
+    'DECOMPOSER',
+    `Model responded in ${response.latencyMs ?? 0}ms, ${response.usage?.totalTokens ?? 0} tokens`,
+  );
+  logger.info('DECOMPOSER', `Finish reason: ${response.finishReason || 'unknown'}`);
   if (process.env.MAOS_DEBUG) {
     console.log('[DECOMPOSER] RAW RESPONSE CONTENT:', JSON.stringify(response.content, null, 2));
     console.log('[DECOMPOSER] RAW TOOL CALLS:', JSON.stringify(response.toolCalls, null, 2));
@@ -269,7 +297,7 @@ export async function decompose(
   let planData: any;
   let extractionSource = 'tool_call';
 
-  const planCall = response.toolCalls.find((tc) => tc.function.name === 'submit_plan');
+  const planCall = (response.toolCalls || []).find((tc) => tc.function.name === 'submit_plan');
 
   if (planCall) {
     // Model used the tool correctly — parse the arguments
