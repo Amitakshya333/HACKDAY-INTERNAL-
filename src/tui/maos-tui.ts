@@ -534,6 +534,7 @@ export class MaosTui {
   private settingsScrollOffset: number = 0;
   private settingsViewportRows: number = 16;
   private settingsRenderedRowCount: number = 0;
+  private lastRenderedFrame: string[] = [];
 
   private gpuStats: GpuStats = {
     vramUsedMiB: 3074,
@@ -550,6 +551,7 @@ export class MaosTui {
   private swarmAnimTimer: NodeJS.Timeout | null = null;
   private projectRoot: string;
   private readonly resizeHandler = () => {
+    this.lastRenderedFrame = [];
     process.stdout.write('\x1b[2J\x1b[H');
     this.render();
   };
@@ -2998,7 +3000,7 @@ export class MaosTui {
           if (this.isRunning && this.activeTab === 3 && !this.externalCommandRunning && !this.isRendering) {
             this.render();
           }
-        }, 125);
+        }, 42);
         this.swarmAnimTimer.unref();
       }
     } else if (this.swarmAnimTimer) {
@@ -3155,13 +3157,15 @@ export class MaosTui {
     lines.push(fullLine(hotkeys));
 
     // Rewrite from the cursor home and strictly clamp rows to viewport height
-    const rendered = lines
-      .slice(0, terminalRows)
-      .map((l) => fitTerminalLine(l, W))
-      .join('\n');
+    const frame = lines.slice(0, terminalRows).map((l) => fitTerminalLine(l, W));
     const clearBelow = terminalRows < this.lastRenderedRowCount ? '\x1b[J' : '';
     this.lastRenderedRowCount = terminalRows;
-    process.stdout.write('\x1b[H' + rendered + clearBelow);
+    const changed = frame.flatMap((line, row) =>
+      line === this.lastRenderedFrame[row] ? [] : [`\x1b[${row + 1};1H${line}`],
+    );
+    for (let row = frame.length; row < this.lastRenderedFrame.length; row++) changed.push(`\x1b[${row + 1};1H\x1b[2K`);
+    this.lastRenderedFrame = frame;
+    if (changed.length || clearBelow) process.stdout.write(changed.join('') + clearBelow);
   }
 
   // ── Tab 1: MAOS Oasis welcome screen ───────────────────────────

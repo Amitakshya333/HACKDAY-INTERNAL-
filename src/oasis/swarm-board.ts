@@ -489,7 +489,7 @@ export function renderSwarmBoard(
   // ──────────────────────────────────────────────────────────────────────────
   const mascotWidth = 20;
   const mascotLines = renderJellyfishMascot(time, mascotWidth, 8);
-  const headerInfoWidth = Math.max(0, W - mascotWidth - 3);
+  const headerInfoWidth = W - mascotWidth - 3;
 
   const activeCount = agents.filter((a) => a.state === 'working').length;
   const doneCount = agents.filter((a) => a.state === 'done').length;
