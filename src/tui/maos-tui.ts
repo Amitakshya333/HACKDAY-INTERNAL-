@@ -530,6 +530,7 @@ export class MaosTui {
   private rawStdinFlushTimer: NodeJS.Timeout | null = null;
   private origStdinEmit: ((event: string | symbol, ...args: any[]) => boolean) | null = null;
   private keypressHandler: ((str: string | undefined, key: any) => void) | null = null;
+  private sidebarCollapsed: boolean = false;
 
   private settingsScrollOffset: number = 0;
   private settingsViewportRows: number = 16;
@@ -748,6 +749,34 @@ export class MaosTui {
 
   public getChatMessages(): readonly ChatMessage[] {
     return this.chatMessages;
+  }
+
+  public isSidebarCollapsed(): boolean {
+    return this.sidebarCollapsed;
+  }
+
+  public setSidebarCollapsed(collapsed: boolean): void {
+    this.sidebarCollapsed = Boolean(collapsed);
+    this.statusMessage = this.sidebarCollapsed
+      ? 'Sidebar minimized (Ctrl+\\ to expand).'
+      : 'Sidebar expanded (Ctrl+\\ to minimize).';
+    this.render();
+  }
+
+  public toggleSidebar(): boolean {
+    this.sidebarCollapsed = !this.sidebarCollapsed;
+    this.statusMessage = this.sidebarCollapsed
+      ? 'Sidebar minimized (Ctrl+\\ to expand).'
+      : 'Sidebar expanded (Ctrl+\\ to minimize).';
+    this.render();
+    return this.sidebarCollapsed;
+  }
+
+  public getRailWidth(terminalW: number = Math.max(20, (process.stdout.columns || 120) - 2)): number {
+    if (this.sidebarCollapsed) {
+      return terminalW >= 40 ? 5 : 0;
+    }
+    return terminalW >= 80 ? 20 : terminalW >= 40 ? 5 : 0;
   }
 
   public start(): void {
@@ -1000,8 +1029,10 @@ export class MaosTui {
                   ? 'backspace'
                   : str === '\t'
                     ? 'tab'
-                    : str,
-          ctrl: str === '\x03',
+                    : str === '\x1c'
+                      ? '\\'
+                      : str,
+          ctrl: str === '\x03' || str === '\x1c',
           meta: false,
           shift: false,
         };
@@ -1042,7 +1073,21 @@ export class MaosTui {
           return;
         }
 
-        // Left button click, release, motion, or other button events are cleanly consumed
+        // Left button click, release, motion, or other button events:
+        // Handle left click press on the top rail minimize/expand chevron
+        if (btn === 0 && sgrMouseMatch[4] === 'M') {
+          const col = parseInt(sgrMouseMatch[2], 10);
+          const row = parseInt(sgrMouseMatch[3], 10);
+          const W = Math.max(20, (process.stdout.columns || 120) - 2);
+          const railW = this.getRailWidth(W);
+          if (railW > 0) {
+            const railStartCol = W - railW;
+            if (row >= 2 && row <= 4 && col >= railStartCol - 3) {
+              this.toggleSidebar();
+              return;
+            }
+          }
+        }
         return;
       }
 
@@ -1099,6 +1144,10 @@ export class MaosTui {
       }
 
       // Global Direct Ctrl Shortcuts (Work universally from any view, including chat/input)
+      if ((key.ctrl && (key.name === '\\' || key.name === 'backslash')) || str === '\x1c') {
+        this.toggleSidebar();
+        return;
+      }
       if ((key.ctrl && key.name === 'p') || str === '\x10') {
         this.previewArtifacts();
         return;
@@ -1129,7 +1178,7 @@ export class MaosTui {
             this.render();
           }, 4000);
           this.statusMessage =
-            'PREFIX MODE ACTIVE: [P] Preview · [G] Model · [R] Refresh · [I] Ignite · [0-5] Tab · [Esc] Cancel';
+            'PREFIX MODE ACTIVE: [P] Preview · [G] Model · [S] Sidebar · [R] Refresh · [I] Ignite · [0-5] Tab · [Esc] Cancel';
         } else {
           this.statusMessage = 'Prefix mode deactivated.';
         }
@@ -1184,11 +1233,8 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (actionKey === 's') {
-          this.loadWorkplaceConfig();
-          this.activeTab = 0;
-          this.statusMessage = 'Switched to View [0] — Settings.';
-          this.render();
+        if (actionKey === 's' || actionKey === '\\') {
+          this.toggleSidebar();
           return;
         }
         if (actionKey === 'pageup' || actionKey === 'up' || actionKey === 'k') {
@@ -1928,10 +1974,11 @@ export class MaosTui {
         '  /test               Run the Canva 3D test command',
         '  /web                Open the MAOS web dashboard',
         '  /refresh            Refresh GPU, HERDR telemetry, and settings',
+        '  /sidebar            Toggle right-hand tab sidebar (Ctrl+\\)',
         '  /quit, /exit        Exit MAOS Oasis',
         '  /help               Show this command list',
         '',
-        'Hotkeys: Tab switch views, 0-5 jump, / focus prompt, C chat, G cycle models, P preview output, R refresh, Q quit.',
+        'Hotkeys: Tab switch views, Ctrl+\\ toggle sidebar, 0-5 jump, / focus prompt, C chat, G cycle models, P preview output, R refresh, Q quit.',
       );
       this.transcriptScrollOffset = 0;
       this.transcript = this.transcript.slice(-5000);
@@ -2095,6 +2142,10 @@ export class MaosTui {
         this.statusMessage = 'Switched to View [0] — Settings & Configuration.';
         this.render();
       }
+      return;
+    }
+    if (['sidebar', 'collapse', 'rail'].includes(name)) {
+      this.toggleSidebar();
       return;
     }
     if (name === 'web' || name === 'web-dashboard') {
@@ -2319,7 +2370,7 @@ export class MaosTui {
     this.transcript.push(...addedRows);
     if (this.transcriptScrollOffset > 0) {
       const terminalWidth = Math.max(1, process.stdout.columns || 120);
-      const railWidth = terminalWidth >= Math.max(113, MAOS_OASIS_LOGO_WIDTH + 27) ? 24 : 0;
+      const railWidth = this.getRailWidth(terminalWidth);
       const outputWidth = terminalWidth - railWidth - (railWidth ? 3 : 0) - 1;
       this.transcriptScrollOffset += addedRows.reduce(
         (count, row) => count + wrapTerminalLine(row, outputWidth).length,
@@ -2966,7 +3017,7 @@ export class MaosTui {
 
   private renderInternal(): void {
     const W = Math.max(20, (process.stdout.columns || 120) - 2);
-    const railW = W >= Math.max(113, MAOS_OASIS_LOGO_WIDTH + 27) ? 24 : 0;
+    const railW = this.getRailWidth(W);
     const mainW = W - railW - (railW ? 3 : 0);
     const lines: string[] = [];
     const visibleLength = terminalCellWidth;
@@ -3028,33 +3079,62 @@ export class MaosTui {
 
     if (railW) {
       const sidebar = Array.from({ length: bodyRows }, () => '');
-      const railItem = (row: number, label: string, tab: number, quiet = false, rightText = '') => {
+
+      // Minimize / expand button indicator at the top of the rail
+      if (bodyRows > 0) {
+        if (this.sidebarCollapsed) {
+          sidebar[0] = pad(centerTerminalLine(c.cyanBright('»'), railW), railW);
+        } else {
+          sidebar[0] = pad(`${c.cyanBright('«')} ${c.slateMuted('Collapse')}`, railW);
+        }
+      }
+
+      const railItem = (row: number, icon: string, title: string, tab: number, quiet = false, rightText = '') => {
         if (row < 0 || row >= bodyRows) return;
         const selected = tab === this.activeTab && !quiet;
-        if (rightText) {
-          const left = `  ${label}`;
-          const gap = Math.max(1, railW - visibleLength(left) - visibleLength(rightText));
-          const item = left + ' '.repeat(gap) + rightText;
+        if (this.sidebarCollapsed) {
+          const centered = centerTerminalLine(icon, railW);
           sidebar[row] = selected
-            ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(item.padEnd(railW, ' ')), railW)
-            : pad(c.slateText(left) + ' '.repeat(gap) + c.white(rightText), railW);
-        } else if (selected) {
-          const active = `  ${label}`.padEnd(railW - 2, ' ') + '  ';
-          sidebar[row] = pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(active), railW);
+            ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(centered), railW)
+            : pad(c.slateText(centered), railW);
         } else {
-          sidebar[row] = pad(c.slateText(`  ${label}`), railW);
+          const fullLabel = `${icon}  ${title}`;
+          if (rightText) {
+            const left = `  ${fullLabel}`;
+            const gap = Math.max(1, railW - visibleLength(left) - visibleLength(rightText));
+            const item = left + ' '.repeat(gap) + rightText;
+            sidebar[row] = selected
+              ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(item.padEnd(railW, ' ')), railW)
+              : pad(c.slateText(left) + ' '.repeat(gap) + c.white(rightText), railW);
+          } else if (selected) {
+            const active = `  ${fullLabel}`.padEnd(railW - 2, ' ') + '  ';
+            sidebar[row] = pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(active), railW);
+          } else {
+            sidebar[row] = pad(c.slateText(`  ${fullLabel}`), railW);
+          }
         }
       };
-      const navTop = Math.max(1, Math.floor(bodyRows * 0.08));
-      railItem(navTop, '⌂  Dashboard', 1);
-      railItem(navTop + 2, '💬  Chat', 2);
-      railItem(navTop + 4, '◇  Swarm', 3, false, String(this.swarmAgents.length || this.herdrAgents.length || 5));
-      railItem(navTop + 6, '▥  Telemetry', 4);
-      railItem(navTop + 8, '▤  Event Log', 5);
-      const settingsRow = Math.max(navTop + 11, bodyRows - 3);
-      if (settingsRow - 1 >= 0 && settingsRow - 1 < bodyRows)
+
+      const step = bodyRows >= 16 ? 2 : 1;
+      const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
+      railItem(navTop, '⌂', 'Dashboard', 1);
+      railItem(navTop + step, '💬', 'Chat', 2);
+      railItem(
+        navTop + step * 2,
+        '❖',
+        'Swarm',
+        3,
+        false,
+        String(this.swarmAgents.length || this.herdrAgents.length || 5),
+      );
+      railItem(navTop + step * 3, '▥', 'Telemetry', 4);
+      railItem(navTop + step * 4, '☰', 'Event Log', 5);
+
+      const settingsRow = Math.max(navTop + step * 5 + 1, bodyRows - 2);
+      if (settingsRow - 1 >= 0 && settingsRow - 1 < bodyRows) {
         sidebar[settingsRow - 1] = c.slateBorder('─'.repeat(railW));
-      railItem(settingsRow, '⚙  Settings', 0);
+      }
+      railItem(settingsRow, '⚙', 'Settings', 0);
 
       for (let i = 0; i < bodyRows; i++) {
         lines.push(`${pad(pageAt(i), mainW)}${c.slateBorder(' │ ')}${pad(sidebar[i], railW)}`);
@@ -3065,7 +3145,7 @@ export class MaosTui {
 
     if (this.prefixActive) {
       lines.push(c.slateBorder('─'.repeat(W)));
-      const prefixBanner = `${chalk.bgHex('#06B6D4').hex('#000000').bold(' ⚡ PREFIX (Ctrl+B) ACTIVE ')} ${c.boldWhite('Press:')} ${c.emerald('P')} ${c.slateMuted('Preview')}  ${c.amber('G')} ${c.slateMuted('Model')}  ${c.cyanBright('R')} ${c.slateMuted('Refresh')}  ${c.white('I')} ${c.slateMuted('Ignite')}  ${c.white('0-5')} ${c.slateMuted('Tab')}  ${c.slateMuted('Esc: Cancel')}`;
+      const prefixBanner = `${chalk.bgHex('#06B6D4').hex('#000000').bold(' ⚡ PREFIX (Ctrl+B) ACTIVE ')} ${c.boldWhite('Press:')} ${c.emerald('P')} ${c.slateMuted('Preview')}  ${c.amber('G')} ${c.slateMuted('Model')}  ${c.cyanBright('S')} ${c.slateMuted('Sidebar')}  ${c.cyanBright('R')} ${c.slateMuted('Refresh')}  ${c.white('I')} ${c.slateMuted('Ignite')}  ${c.white('0-5')} ${c.slateMuted('Tab')}  ${c.slateMuted('Esc: Cancel')}`;
       lines.push(fullLine(prefixBanner));
     } else if (hasStatus) {
       lines.push(c.slateBorder('─'.repeat(W)));
@@ -3083,6 +3163,7 @@ export class MaosTui {
         : this.activeTab === 1
           ? [
               `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
+              `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
               `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
               `${c.boldWhite('Ctrl+G')} ${c.amber(
                 `Model ${
@@ -3102,6 +3183,7 @@ export class MaosTui {
           : this.activeTab === 2
             ? [
                 `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
+                `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                 `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
                 `${c.boldWhite('Ctrl+G')} ${c.amber(
                   `Model ${
@@ -3120,6 +3202,7 @@ export class MaosTui {
             : this.activeTab === 3
               ? [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+                  `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                   `${c.boldWhite('P')} ${c.emerald('Preview')}`,
                   `${c.boldWhite('G')} ${c.amber(
                     `Model ${
@@ -3138,6 +3221,7 @@ export class MaosTui {
                 ]
               : [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
+                  `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                   `${c.boldWhite('0-5')} ${c.slateMuted('Jump')}`,
                   `${c.boldWhite('/')} ${c.slateMuted('Prompt')}`,
                   `${c.boldWhite('C')} ${c.cyan('Chat')}`,
