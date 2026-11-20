@@ -208,6 +208,9 @@ export function checkConfigAndRuntime(cwd: string, fix: boolean): DoctorCheckRes
   if (missingDirs.length > 0 || missingGitignore) {
     if (fix) {
       ensureOasisRuntimeDirs(cwd);
+      try {
+        child_process.execSync('git worktree prune', { cwd, stdio: 'ignore', timeout: 3000 });
+      } catch {}
       return {
         id: 'oasis_config',
         name: 'Config & Runtime State',

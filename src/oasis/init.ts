@@ -31,6 +31,8 @@ import {
   InitOptions,
 } from './types';
 import { getOasisConfigPath, loadOasisConfig, saveOasisConfig, ensureOasisRuntimeDirs } from './config';
+import { saveMachineConfig } from './machine-config';
+import { trustProject } from './trust';
 import { renderPanel, getBrandBadge } from '../utils/ui';
 
 export interface ProbedHardware {
@@ -744,6 +746,12 @@ export async function runOasisInit(options: InitOptions = {}): Promise<MaosOasis
   // Write ./maos-oasis.config.json & initialize ./.maos-oasis/
   saveOasisConfig(oasisConfig, cwd);
   ensureOasisRuntimeDirs(cwd);
+  try {
+    saveMachineConfig(oasisConfig);
+  } catch {}
+  try {
+    trustProject(cwd);
+  } catch {}
 
   // Initialize git repository if .git missing (required for worktree branch isolation)
   const gitDir = path.join(cwd, '.git');

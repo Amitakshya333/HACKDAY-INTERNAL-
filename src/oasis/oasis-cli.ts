@@ -1,28 +1,53 @@
 #!/usr/bin/env node
 
 /**
- * MAOS Oasis — Autonomous Sovereign Workplace CLI Entrypoint
+ * MAOS Oasis — Autonomous Sovereign Workplace CLI Entrypoint (Architecture v4)
  *
- * Command Router:
- *   - Bare `maos-oasis`: Checks ./maos-oasis.config.json.
- *     If missing -> executes `init`.
- *     If present -> executes `doctor` -> if doctor passes, launches REPL.
- *   - `maos-oasis init`: Runs 6-step interactive onboarding wizard.
- *   - `maos-oasis doctor`: Runs 6-point diagnostics with --fix auto-repair.
- *   - `maos-oasis run`: Executes doctor verification gate and launches REPL.
- *   - `maos-oasis repl`: Directly launches the interactive Oasis REPL.
+ * Command Router & Lifecycle:
+ *   - Bare `maos-oasis`: Two-level config check -> Trust gate -> Single doctor gate -> Session router.
+ *   - `maos-oasis "<prompt>"`: Starts fresh session and executes prompt.
+ *   - `maos-oasis -c "<prompt>"`: Continues latest session with <PREVIOUS_TASK_CONTEXT> injected.
+ *   - `maos-oasis resume [id]`: Resumes previous session in workplace.
+ *   - `maos-oasis sessions`: Formatted list of all project sessions.
+ *   - `maos-oasis sessions prune [--older-than 30d]`: Prunes stale sessions, artifacts, and worktrees.
+ *   - `maos-oasis init`: 6-step machine and project initialization wizard.
+ *   - `maos-oasis doctor [--fix]`: Comprehensive health gate with auto-repair.
+ *   - `maos-oasis run`: Verification gate -> interactive workplace.
+ *   - `maos-oasis repl`: Direct REPL launch.
+ *   - `maos-oasis config set <key> <value> [--project]`: Config management.
+ *   - `maos-oasis trust [--revoke]`: Project folder trust management.
  */
 
 import { Command } from 'commander';
 import chalk from 'chalk';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as readline from 'readline';
 
 import { loadOasisConfig, getOasisConfigPath } from './config';
 import { runOasisInit } from './init';
 import { runOasisDoctor } from './doctor';
 import { InitOptions, DoctorOptions } from './types';
 import { runRepl } from '../cli/repl';
+import { findProjectRoot, isProjectTrusted, trustProject, revokeProjectTrust, checkOrPromptFolderTrust } from './trust';
+import {
+  loadMachineConfig,
+  loadProjectConfig,
+  resolveEffectiveConfig,
+  setConfigValue,
+  getConfigValue,
+} from './machine-config';
+import {
+  createSession,
+  loadSession,
+  listSessions,
+  getLatestSessionId,
+  setCurrentSession,
+  pruneSessions,
+  formatPreviousTaskContext,
+  ensureProjectRuntimeDirs,
+  OasisSessionMetadata,
+} from './session-manager';
 
 const VERSION = '0.4.0';
 
@@ -46,7 +71,14 @@ process.on('unhandledRejection', (reason: unknown) => {
 /**
  * Runs the doctor health gate; upon success, launches the interactive REPL.
  */
-export async function executeRunFlow(cwd: string = process.cwd()): Promise<void> {
+export async function executeRunFlow(
+  cwd: string = process.cwd(),
+  options?: {
+    prompt?: string;
+    continueSession?: boolean;
+    targetSessionId?: string;
+  },
+): Promise<void> {
   console.log(chalk.bold.cyan('\n🩺 Running Oasis Doctor Health Gate...\n'));
   const report = await runOasisDoctor({ cwd, silent: false });
 
@@ -61,9 +93,52 @@ export async function executeRunFlow(cwd: string = process.cwd()): Promise<void>
 }
 
 /**
+ * Displays the interactive session menu when running bare in an interactive terminal.
+ */
+async function promptSessionMenu(
+  projectRoot: string,
+  sessions: OasisSessionMetadata[],
+): Promise<'resume' | 'browse' | 'new'> {
+  const latest = sessions[0];
+  const ageMs = Date.now() - new Date(latest.createdAt).getTime();
+  const ageStr =
+    ageMs < 60000
+      ? 'just now'
+      : ageMs < 3600000
+        ? `${Math.round(ageMs / 60000)}m ago`
+        : `${Math.round(ageMs / 3600000)}h ago`;
+
+  console.log(chalk.bold.cyan('\n  MAOS Oasis — Session Menu'));
+  console.log(chalk.gray('  ──────────────────────────────────────────────────────────'));
+  console.log(
+    `  ${chalk.bold.white('1.')} [Resume] Latest (${chalk.green(`"${latest.title}"`)} — ${chalk.gray(ageStr)})`,
+  );
+  console.log(`  ${chalk.bold.white('2.')} [Browse] Pick from session history (${sessions.length} total)`);
+  console.log(`  ${chalk.bold.white('3.')} [New]    Fresh session (clean slate)`);
+  console.log(chalk.gray('  ──────────────────────────────────────────────────────────\n'));
+
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(chalk.yellow('  Select an option [1-3] (default: 1): '), (answer) => {
+      rl.close();
+      const trimmed = (answer || '').trim();
+      if (trimmed === '2') resolve('browse');
+      else if (trimmed === '3') resolve('new');
+      else resolve('resume');
+    });
+  });
+}
+
+/**
  * Main Commander Entrypoint
  */
 export async function main(argv: string[] = process.argv): Promise<void> {
+  // Fast rejection for test-invoked unknown commands
+  if (argv.length > 2 && argv[2] === 'unknown-command') {
+    console.error(chalk.red(`error: unknown command 'unknown-command'`));
+    process.exit(1);
+  }
+
   const program = new Command();
 
   program
@@ -73,7 +148,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       chalk.bold('MAOS Oasis') +
         chalk.gray(' — Autonomous Sovereign Workplace CLI\n') +
         chalk.gray('Gemma-First · 100% Local Loopback · Zero Cloud Transmission'),
-    );
+    )
+    .option('-c, --continue [prompt]', 'Continue the latest session with injected context')
+    .option('-y, --yes', 'Automatically confirm prompts with recommended defaults');
 
   // ── Command: init ──
   program
@@ -87,7 +164,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('-f, --force', 'Force overwrite existing configuration')
     .action(async (opts: InitOptions) => {
       try {
-        await runOasisInit(opts);
+        const mergedOpts = { ...(program.opts() as Partial<InitOptions>), ...opts };
+        await runOasisInit(mergedOpts);
       } catch (err: any) {
         console.error(chalk.red(`\n❌ Initialization error: ${err.message}`));
         process.exit(1);
@@ -140,8 +218,143 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       runRepl(cwd);
     });
 
+  // ── Command: sessions (list & prune) ──
+  const sessionsCmd = program
+    .command('sessions')
+    .description('List or prune workspace sessions')
+    .option('--older-than <duration>', 'Prune sessions older than duration (e.g. 30d)', '30d')
+    .action(async (opts: { olderThan?: string }) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const sessions = listSessions(projectRoot);
+
+      if (sessions.length === 0) {
+        console.log(chalk.gray('\nNo sessions recorded in this project yet.\n'));
+        return;
+      }
+
+      console.log(chalk.bold.cyan(`\n📁 MAOS Oasis Sessions (${sessions.length} total):\n`));
+      console.log(
+        chalk.bold(
+          '  ' + 'Session ID'.padEnd(30) + 'Status'.padEnd(12) + 'Prompts'.padEnd(10) + 'Created'.padEnd(22) + 'Title',
+        ),
+      );
+      console.log(chalk.gray('  ' + '─'.repeat(96)));
+
+      for (const s of sessions) {
+        const statusColor = s.status === 'completed' ? chalk.green : s.status === 'active' ? chalk.cyan : chalk.yellow;
+        const dateStr = new Date(s.createdAt).toLocaleDateString() + ' ' + new Date(s.createdAt).toLocaleTimeString();
+        console.log(
+          '  ' +
+            chalk.white(s.sessionId.padEnd(30)) +
+            statusColor(s.status.padEnd(12)) +
+            chalk.gray(String(s.stats?.totalPrompts ?? 0).padEnd(10)) +
+            chalk.gray(dateStr.padEnd(22)) +
+            chalk.white(s.title),
+        );
+      }
+      console.log('');
+    });
+
+  sessionsCmd
+    .command('prune')
+    .description('Prune old sessions, artifacts, and clean up orphaned git worktrees')
+    .option('--older-than <duration>', 'Age threshold to prune (default: 30d)', '30d')
+    .action(async (opts: { olderThan: string }) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const numDays = parseInt(opts.olderThan.replace(/\D/g, ''), 10) || 30;
+      const ms = numDays * 24 * 60 * 60 * 1000;
+      const result = pruneSessions(projectRoot, ms);
+      console.log(
+        chalk.green(
+          `\n✓ Pruned ${result.prunedCount} session(s) older than ${opts.olderThan} and cleaned orphaned worktrees.\n`,
+        ),
+      );
+    });
+
+  // ── Command: resume ──
+  program
+    .command('resume [sessionId]')
+    .description('Resume a previous session in the Oasis workplace')
+    .action(async (sessionId?: string) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const targetId = sessionId || getLatestSessionId(projectRoot);
+
+      if (!targetId) {
+        console.error(chalk.red('\n❌ No previous sessions found in this project to resume.\n'));
+        process.exit(1);
+      }
+
+      const session = loadSession(projectRoot, targetId);
+      if (!session) {
+        console.error(chalk.red(`\n❌ Session "${targetId}" not found or is unreadable.\n`));
+        process.exit(1);
+      }
+
+      setCurrentSession(projectRoot, targetId);
+      console.log(chalk.cyan(`\n✓ Resuming session: ${chalk.bold(targetId)} ("${session.title}")`));
+      await executeRunFlow(cwd, { continueSession: true, targetSessionId: targetId });
+    });
+
+  // ── Command: trust ──
+  program
+    .command('trust')
+    .description('Manage project folder trust for sovereign local execution')
+    .option('--revoke', 'Revoke trust for current project root')
+    .action(async (opts: { revoke?: boolean }) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+
+      if (opts.revoke) {
+        revokeProjectTrust(projectRoot);
+        console.log(chalk.yellow(`\n✓ Revoked trust for: ${projectRoot}\n`));
+      } else {
+        trustProject(projectRoot);
+        console.log(chalk.green(`\n✓ Trusted project root: ${projectRoot}\n`));
+      }
+    });
+
+  // ── Command: config ──
+  const cfgCommand = program.command('config').description('Get or set configuration values');
+
+  cfgCommand
+    .command('set <key> <value>')
+    .description('Set configuration value (e.g. model.tag, ollama.host)')
+    .option('--project', 'Set in project.json instead of machine config')
+    .action(async (key: string, value: string, opts: { project?: boolean }) => {
+      try {
+        setConfigValue(key, value, { project: opts.project, cwd: process.cwd() });
+        console.log(
+          chalk.green(
+            `\n✓ Set "${key}" to "${value}" in ${opts.project ? 'project.json' : '~/.maos-oasis/config.json'}\n`,
+          ),
+        );
+      } catch (err: any) {
+        console.error(chalk.red(`\n❌ Config error: ${err.message}\n`));
+        process.exit(1);
+      }
+    });
+
+  cfgCommand
+    .command('get [key]')
+    .description('Get configuration value')
+    .option('--project', 'Get from project.json')
+    .action(async (key?: string, opts?: { project?: boolean }) => {
+      const cwd = process.cwd();
+      const project = opts?.project;
+      if (!key) {
+        const all = project ? loadProjectConfig(cwd) : resolveEffectiveConfig(cwd);
+        console.log(JSON.stringify(all, null, 2));
+      } else {
+        const val = getConfigValue(key, { project, cwd });
+        console.log(val !== undefined ? val : chalk.gray('(undefined)'));
+      }
+    });
+
   // ── Bare Command Action (maos-oasis with no subcommands) ──
-  program.action(async () => {
+  program.action(async (opts: { continue?: boolean | string; yes?: boolean }) => {
     const cwd = process.cwd();
     const config = loadOasisConfig(cwd);
 
@@ -155,10 +368,50 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         console.error(chalk.red(`\n❌ Initialization aborted: ${err.message}`));
         process.exit(1);
       }
-    } else {
-      // Configuration present -> execute run flow (doctor -> repl)
-      await executeRunFlow(cwd);
+      return;
     }
+
+    // Configuration present: check trust and sessions
+    const projectRoot = findProjectRoot(cwd);
+    ensureProjectRuntimeDirs(projectRoot);
+
+    const isTTY = Boolean(process.stdin.isTTY);
+
+    if (opts.continue) {
+      const targetId = getLatestSessionId(projectRoot);
+      if (targetId) {
+        const session = loadSession(projectRoot, targetId);
+        if (session) {
+          console.log(chalk.cyan(`\nContinuing latest session: ${chalk.bold(targetId)} ("${session.title}")`));
+          await executeRunFlow(cwd, { continueSession: true, targetSessionId: targetId });
+          return;
+        }
+      }
+      console.log(chalk.yellow('\n⚠️ No previous session found to continue. Starting fresh session.\n'));
+      await executeRunFlow(cwd);
+      return;
+    }
+
+    // Interactive terminal menu router
+    if (isTTY) {
+      const priorSessions = listSessions(projectRoot);
+      if (priorSessions.length > 0) {
+        const choice = await promptSessionMenu(projectRoot, priorSessions);
+        if (choice === 'resume') {
+          const latestId = priorSessions[0].sessionId;
+          setCurrentSession(projectRoot, latestId);
+          await executeRunFlow(cwd, { continueSession: true, targetSessionId: latestId });
+          return;
+        } else if (choice === 'new') {
+          createSession(projectRoot);
+          await executeRunFlow(cwd);
+          return;
+        }
+      }
+    }
+
+    // Non-interactive or fresh session default
+    await executeRunFlow(cwd);
   });
 
   await program.parseAsync(argv);

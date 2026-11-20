@@ -35,6 +35,13 @@ import {
 } from '../oasis/swarm-board';
 import { renderJellyfishMascot, generateJellyfishRawFrame, renderColoredJellyfish } from '../oasis/jellyfish-ascii';
 import { TextInputState, renderInputContentWithCursor } from './text-input';
+import {
+  loadSession,
+  getLatestSessionId,
+  createSession,
+  compactSessionContext,
+  setCurrentSession,
+} from '../oasis/session-manager';
 
 // ── Colors & Styles ──────────────────────────────────────────────
 const c = {
@@ -2451,6 +2458,9 @@ export class MaosTui {
         '  /web                Open the MAOS web dashboard',
         '  /refresh            Refresh GPU, HERDR telemetry, and settings',
         '  /sidebar, /collapse Toggle right-hand tab sidebar (Ctrl+\\)',
+        '  /session [id]       Display active session info or switch session',
+        '  /new [goal]         Start a fresh session with clean slate',
+        '  /compact            Compact task history into context_summary.md',
         '  /quit, /exit        Exit MAOS Oasis',
         '  /help               Show this command list',
         '',
@@ -2645,6 +2655,83 @@ export class MaosTui {
       ['sidebar', 'collapse', 'rail', 'minimize', 'maximize', 'expand', 'min', 'max', 'panel', 'tabs'].includes(name)
     ) {
       this.toggleSidebar();
+      return;
+    }
+    if (name === 'session' || name === 'sess') {
+      const targetId = parts[0];
+      if (targetId) {
+        const sess = loadSession(this.projectRoot, targetId);
+        if (!sess) {
+          this.reportCommand(`Session "${targetId}" not found.`, true);
+          return;
+        }
+        setCurrentSession(this.projectRoot, targetId);
+        this.statusMessage = `Switched to session: ${targetId} ("${sess.title}")`;
+        this.appendTranscript(this.statusMessage);
+        this.render();
+        return;
+      }
+
+      const activeId = getLatestSessionId(this.projectRoot);
+      const sess = activeId ? loadSession(this.projectRoot, activeId) : null;
+      if (!sess) {
+        this.appendTranscript('No active session recorded. Use /new to start one.');
+        this.render();
+        return;
+      }
+
+      this.transcript.push(
+        '',
+        '── Active Session ──',
+        `  ID      : ${sess.sessionId}`,
+        `  Title   : ${sess.title}`,
+        `  Status  : ${sess.status.toUpperCase()}`,
+        `  Model   : ${sess.model}`,
+        `  Created : ${new Date(sess.createdAt).toLocaleString()}`,
+        `  Tasks   : ${sess.tasks.length}`,
+        `  Prompts : ${sess.stats?.totalPrompts ?? 0}`,
+        `  Tokens  : ${sess.stats?.tokensGenerated ?? 0}`,
+        sess.git?.branch ? `  Git     : branch "${sess.git.branch}" (commit ${sess.git.headCommit || 'none'})` : '',
+        '',
+      );
+      this.statusMessage = `Active session: ${sess.sessionId}`;
+      this.render();
+      return;
+    }
+    if (name === 'new' || name === 'fresh') {
+      const goal = parts.join(' ');
+      const newSess = createSession(this.projectRoot, {
+        title: goal || 'Fresh Session',
+        goal: goal || undefined,
+        model: this.selectedModel,
+      });
+      this.transcript = [];
+      this.statusMessage = `Started fresh session: ${newSess.sessionId}`;
+      this.appendTranscript(`✓ Fresh session created: ${newSess.sessionId}`);
+      this.render();
+      return;
+    }
+    if (name === 'compact') {
+      const activeId = getLatestSessionId(this.projectRoot);
+      if (!activeId) {
+        this.reportCommand('No active session to compact.', true);
+        return;
+      }
+      const sess = loadSession(this.projectRoot, activeId);
+      if (!sess) {
+        this.reportCommand('Could not load active session metadata.', true);
+        return;
+      }
+      const summary = `Compacted session history for "${sess.title}". Prior tasks: ${sess.tasks.map((t) => t.goal).join('; ') || 'none'}. Output: ${
+        sess.tasks
+          .map((t) => t.outputDir)
+          .filter(Boolean)
+          .join(', ') || 'output/'
+      }.`;
+      compactSessionContext(this.projectRoot, activeId, summary);
+      this.statusMessage = 'Context compacted into context_summary.md (1,500 token budget refreshed).';
+      this.appendTranscript(this.statusMessage);
+      this.render();
       return;
     }
     if (name === 'web' || name === 'web-dashboard') {
@@ -3188,15 +3275,42 @@ export class MaosTui {
         const rawUrl = req.url?.split('?')[0] || '/';
         const decodedUrl = decodeURIComponent(rawUrl);
         let relPath = decodedUrl.startsWith('/') ? decodedUrl.slice(1) : decodedUrl;
-        if (!relPath || relPath === '') relPath = 'output/index.html';
 
-        const candidates = [
-          path.resolve(this.projectRoot, relPath),
-          path.resolve(this.projectRoot, 'output', relPath),
-          path.resolve(this.projectRoot, 'dist-preview', relPath),
-          path.resolve(this.projectRoot, 'output', 'index.html'),
-          path.resolve(this.projectRoot, 'index.html'),
-        ];
+        // Session-aware preview resolution (Architecture v4 §4.3)
+        const latestSessionId = getLatestSessionId(this.projectRoot);
+        const activeSession = latestSessionId ? loadSession(this.projectRoot, latestSessionId) : null;
+        const lastTask = activeSession?.tasks?.length ? activeSession.tasks[activeSession.tasks.length - 1] : null;
+        const activeOutputDir = lastTask?.outputDir ? path.resolve(this.projectRoot, lastTask.outputDir) : null;
+        const activePreviewEntry = lastTask?.previewEntry
+          ? path.resolve(this.projectRoot, lastTask.previewEntry)
+          : null;
+
+        const isRootRequest = !relPath || relPath === '' || relPath === 'index.html' || relPath === 'output/index.html';
+
+        const candidates: string[] = [];
+
+        if (isRootRequest) {
+          if (activePreviewEntry && fs.existsSync(activePreviewEntry)) {
+            candidates.push(activePreviewEntry);
+          }
+          if (activeOutputDir) {
+            candidates.push(path.join(activeOutputDir, 'index.html'));
+          }
+          candidates.push(
+            path.resolve(this.projectRoot, 'output', 'index.html'),
+            path.resolve(this.projectRoot, 'dist-preview', 'index.html'),
+            path.resolve(this.projectRoot, 'index.html'),
+          );
+        } else {
+          if (activeOutputDir) {
+            candidates.push(path.resolve(activeOutputDir, relPath));
+          }
+          candidates.push(
+            path.resolve(this.projectRoot, relPath),
+            path.resolve(this.projectRoot, 'output', relPath),
+            path.resolve(this.projectRoot, 'dist-preview', relPath),
+          );
+        }
 
         let targetFile: string | null = null;
         for (const cand of candidates) {
@@ -3207,6 +3321,34 @@ export class MaosTui {
         }
 
         if (!targetFile) {
+          if (isRootRequest) {
+            // Informative fallback instead of blank or 404 (Architecture v4 §4.3)
+            const dirLabel = lastTask?.outputDir || 'output/';
+            const fallbackHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MAOS Oasis — Artifact Preview</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #e2e8f0; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #161e2e; border: 1px solid #2d3748; padding: 40px; border-radius: 12px; max-width: 500px; text-align: center; }
+    h2 { color: #38bdf8; margin-top: 0; }
+    p { line-height: 1.6; color: #94a3b8; }
+    code { background: #1e293b; color: #f1f5f9; padding: 3px 8px; border-radius: 6px; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>⚡ No Preview Entry Found</h2>
+    <p>No preview entry file found in <code>${dirLabel}</code> for this task.</p>
+    <p style="font-size:0.9em;color:#64748b;">Workers are compiling or building output files.</p>
+  </div>
+</body>
+</html>`;
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(fallbackHtml);
+            return;
+          }
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('404 Not Found');
           return;

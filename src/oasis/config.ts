@@ -282,6 +282,8 @@ export function ensureOasisRuntimeDirs(cwd: string = process.cwd()): void {
   const queueDir = getOasisQueueDir(cwd);
   const dirs = [
     runtimeDir,
+    path.join(runtimeDir, 'sessions'),
+    path.join(runtimeDir, 'worktrees'),
     queueDir,
     path.join(queueDir, 'pending'),
     path.join(queueDir, 'active'),
