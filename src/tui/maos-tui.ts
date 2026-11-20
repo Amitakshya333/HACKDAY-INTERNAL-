@@ -18,7 +18,13 @@ import * as http from 'http';
 import { exec, execFile, execSync, spawn, type ChildProcess } from 'child_process';
 import chalk from 'chalk';
 import { AgentInfo, getDefaultHerdrHarness, PaneInfo } from '../integrations/herdr';
-import { detectLocalModels, DetectedModel, formatHeaderBadge, formatModelDisplayName } from '../oasis/model-detector';
+import {
+  detectLocalModels,
+  DetectedModel,
+  FALLBACK_MODELS,
+  formatHeaderBadge,
+  formatModelDisplayName,
+} from '../oasis/model-detector';
 import {
   SwarmAgent,
   SwarmPost,
@@ -474,7 +480,9 @@ export class MaosTui {
   private isRendering: boolean = false;
   private renderPending: boolean = false;
   private selectedModel: string = 'gemma2:9b';
-  private detectedModels: DetectedModel[] = [];
+  private detectedModels: DetectedModel[] = [...FALLBACK_MODELS];
+  private isPasting: boolean = false;
+  private pasteBuffer: string = '';
   private modalMode: 'none' | 'ignite' | 'promptTest' = 'none';
   private modalInput: TextInputState = new TextInputState();
   public get modalInputText(): string {
@@ -737,6 +745,21 @@ export class MaosTui {
 
   public setActiveTab(tab: number): void {
     this.activeTab = tab;
+    if (tab === 0) {
+      this.loadWorkplaceConfig();
+    }
+    const tabNames: Record<number, string> = {
+      1: 'Dashboard',
+      2: 'Chat',
+      3: 'Swarm',
+      4: 'Telemetry',
+      5: 'Event Log',
+      0: 'Settings',
+    };
+    if (tabNames[tab]) {
+      this.statusMessage = `Switched to View [${tab}] — ${tabNames[tab]}.`;
+    }
+    this.render();
   }
 
   public getModalMode(): string {
@@ -779,11 +802,87 @@ export class MaosTui {
     return terminalW >= 80 ? 20 : terminalW >= 40 ? 5 : 0;
   }
 
+  public handleMouseClick(col: number, row: number): boolean {
+    const W = Math.max(20, (process.stdout.columns || 120) - 2);
+    const railW = this.getRailWidth(W);
+    if (railW <= 0) return false;
+
+    const mainW = W - railW - (railW ? 3 : 0);
+    const railStartCol = mainW + 1;
+
+    // Must be in the rail separator or content area
+    if (col < railStartCol - 1) {
+      return false;
+    }
+
+    const visibleLength = terminalCellWidth;
+    const title = '◈  MAOS OASIS v0.4.0  │ Sovereign Multi-Agent Swarm Kernel';
+    const vramGb = (this.gpuStats.vramUsedMiB / 1024).toFixed(1);
+    const totalGb = (this.gpuStats.vramTotalMiB / 1024).toFixed(1);
+    const modelBadge = formatHeaderBadge(this.selectedModel);
+    const herdrStatus = this.herdrAvailable
+      ? this.herdrPanes.length > 0
+        ? `HERDR: ${this.herdrPanes.length} PANE${this.herdrPanes.length > 1 ? 'S' : ''}`
+        : 'HERDR: LIVE'
+      : 'HERDR: OFFLINE';
+    const telemetry = `${modelBadge}  │  ${herdrStatus}  │  GPU ${this.gpuStats.tempC}°C  │  VRAM ${vramGb}/${totalGb} GB`;
+    const headerGap = W - visibleLength(title) - visibleLength(telemetry);
+    const headerLines = headerGap >= 2 ? 1 : 2;
+    const bodyStartRow = headerLines + 2; // Line 1 (+2 if wrapped) + 1 for separator line + 1 for 1-based indexing
+
+    const terminalRows = Math.max(10, (process.stdout.rows || 40) - 1);
+    const hasTranscriptSession = this.activeTab === 1 && this.transcript.length > 0;
+    const hasStatus = !hasTranscriptSession && !this.statusMessage.startsWith('Ready.');
+    const footerRows = hasStatus ? 4 : 2;
+    const bodyRows = Math.max(1, terminalRows - (headerLines + 1) - footerRows);
+    const bodyRow = row - bodyStartRow;
+
+    const step = bodyRows >= 16 ? 2 : 1;
+    const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
+
+    // Top area of rail (row 0 or above navTop) toggles sidebar
+    if (bodyRow < navTop) {
+      this.toggleSidebar();
+      return true;
+    }
+
+    if (bodyRow >= bodyRows) return false;
+
+    const settingsRow = Math.max(navTop + step * 5 + 1, bodyRows - 2);
+
+    if (bodyRow >= settingsRow - 1) {
+      this.setActiveTab(0);
+      return true;
+    }
+    if (bodyRow >= navTop && bodyRow < navTop + step) {
+      this.setActiveTab(1);
+      return true;
+    }
+    if (bodyRow >= navTop + step && bodyRow < navTop + step * 2) {
+      this.setActiveTab(2);
+      return true;
+    }
+    if (bodyRow >= navTop + step * 2 && bodyRow < navTop + step * 3) {
+      this.setActiveTab(3);
+      return true;
+    }
+    if (bodyRow >= navTop + step * 3 && bodyRow < navTop + step * 4) {
+      this.setActiveTab(4);
+      return true;
+    }
+    if (bodyRow >= navTop + step * 4 && bodyRow < navTop + step * 5) {
+      this.setActiveTab(5);
+      return true;
+    }
+
+    return false;
+  }
+
   public start(): void {
-    // Switch to alternate screen buffer, clear screen, hide cursor & explicitly disable mouse reporting.
+    // Switch to alternate screen buffer, clear screen, hide cursor, enable bracketed paste & explicitly disable mouse reporting.
     // Disabling DEC modes 1000-1007, 1015, 1016 prevents trackpad scroll gestures from sending escape bursts to stdin
     process.stdout.write(
-      '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l',
+      '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l',
     );
 
     this.setupKeyboard();
@@ -821,6 +920,8 @@ export class MaosTui {
       this.rawStdinFlushTimer = null;
     }
     this.rawStdinBuffer = '';
+    this.isPasting = false;
+    this.pasteBuffer = '';
     if (this.origStdinEmit) {
       process.stdin.emit = this.origStdinEmit;
       this.origStdinEmit = null;
@@ -829,6 +930,67 @@ export class MaosTui {
       process.stdin.removeListener('keypress', this.keypressHandler);
       this.keypressHandler = null;
     }
+  }
+
+  /**
+   * Formats a short model badge for footer hotkeys and status messages.
+   * Ensures Gemma 4 E2B, Gemma 2 models, and Qwen models are clearly identified.
+   */
+  public getModelBadgeShort(modelId: string = this.selectedModel): string {
+    const lower = modelId.toLowerCase();
+    if (lower.startsWith('gemma4:e2b') || lower === 'gemma4' || lower === 'gemma4:latest') return 'Gemma 4 E2B';
+    if (lower.startsWith('gemma2:9b')) return 'Gemma 2 9B';
+    if (lower.startsWith('gemma2:2b')) return 'Gemma 2 2B';
+    if (lower.startsWith('gemma3:4b')) return 'Gemma 3 4B';
+    if (lower.startsWith('gemma')) {
+      const parts = modelId.split(':');
+      return `Gemma ${parts[1] || parts[0].replace('gemma', '')}`.trim();
+    }
+    if (lower.includes('qwen2.5-coder')) return 'Qwen Coder';
+    if (lower.includes('qwen2.5-3b')) return 'Qwen 2.5 3B';
+    if (lower.includes('qwen')) return 'Qwen';
+    return modelId.split('/').pop()?.split(':')[0] || modelId;
+  }
+
+  /**
+   * Atomically handles pasted text blocks (from bracketed paste or clipboard chunks).
+   * Normalizes line breaks into spaces so that multi-line prompts do NOT prematurely
+   * auto-submit or break into chunks, and performs a single atomic render.
+   */
+  public handlePastedText(rawText: string): void {
+    if (!rawText) return;
+
+    // 1. Strip ANSI escape sequences and non-printable control characters
+    let clean = rawText
+      .replace(/\x1b\[[0-9;?]*[a-zA-Z~]/g, '')
+      .replace(/\x1b[\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+
+    // 2. Normalize newlines into spaces so multi-line prompt stays atomic without auto-submitting
+    clean = clean
+      .replace(/\r\n/g, ' ')
+      .replace(/[\r\n\t]/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (!clean) return;
+
+    // 3. Atomically insert into current active input box
+    if (this.modalMode !== 'none') {
+      this.modalInput.insert(clean);
+    } else if (this.activeTab === 2) {
+      this.chatInput.insert(clean);
+      this.statusMessage = `Pasted ${clean.length} chars into chat. Press Enter to send.`;
+    } else {
+      if (this.activeTab !== 1) {
+        this.activeTab = 1;
+      }
+      this.modalInput.insert(clean);
+      this.statusMessage = `Pasted ${clean.length} chars into prompt. Press Enter to run.`;
+    }
+
+    // 4. Single atomic render call!
+    this.render();
   }
 
   private exit(): void {
@@ -864,9 +1026,9 @@ export class MaosTui {
       this.previewServer = null;
     }
     this.cleanupKeyboard();
-    // Restore normal screen buffer, disable mouse reporting, reveal cursor
+    // Restore normal screen buffer, disable mouse reporting, disable bracketed paste, reveal cursor
     process.stdout.write(
-      '\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l\x1b[?1049l\x1b[?25h',
+      '\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l\x1b[?2004l\x1b[?1049l\x1b[?25h',
     );
     console.log(c.cyanBright('✦ MAOS Oasis TUI closed. Returning to terminal.'));
     process.exit(0);
@@ -932,20 +1094,75 @@ export class MaosTui {
       process.stdin.emit = (event: string | symbol, ...args: any[]): boolean => {
         if (event === 'data' && args[0] !== undefined) {
           clearTimer();
-          const chunkStr = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
-          this.rawStdinBuffer += chunkStr;
+          let chunkStr = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
 
-          // Strip focus and bracketed paste reporting
-          this.rawStdinBuffer = this.rawStdinBuffer.replace(FOCUS_REGEX, '');
+          // Strip focus reporting
+          chunkStr = chunkStr.replace(FOCUS_REGEX, '');
+
+          // 1. Bracketed Paste Handling (\x1b[200~ ... \x1b[201~)
+          if (this.isPasting) {
+            const endIdx = chunkStr.indexOf('\x1b[201~');
+            if (endIdx !== -1) {
+              this.pasteBuffer += chunkStr.slice(0, endIdx);
+              const remaining = chunkStr.slice(endIdx + 6);
+              this.isPasting = false;
+              const fullPaste = this.pasteBuffer;
+              this.pasteBuffer = '';
+              this.handlePastedText(fullPaste);
+              if (!remaining) return true;
+              chunkStr = remaining;
+            } else {
+              this.pasteBuffer += chunkStr;
+              return true;
+            }
+          }
+
+          if (chunkStr.includes('\x1b[200~')) {
+            const startIdx = chunkStr.indexOf('\x1b[200~');
+            const before = chunkStr.slice(0, startIdx);
+            const after = chunkStr.slice(startIdx + 6);
+            if (before) {
+              origEmit('data', before);
+            }
+            const endIdx = after.indexOf('\x1b[201~');
+            if (endIdx !== -1) {
+              const fullPaste = after.slice(0, endIdx);
+              const remaining = after.slice(endIdx + 6);
+              this.handlePastedText(fullPaste);
+              if (!remaining) return true;
+              chunkStr = remaining;
+            } else {
+              this.isPasting = true;
+              this.pasteBuffer = after;
+              return true;
+            }
+          }
+
+          // 2. Fallback Paste Detection (multi-line chunks or large text blocks)
+          // Standalone return keys (\r, \n, \r\n) are normal Enter presses for readline.
+          // Chunks containing newlines alongside other text, OR large printable strings (>12 chars)
+          // without escape codes are bulk pastes and should be processed atomically.
+          const isStandaloneReturn = chunkStr === '\r' || chunkStr === '\n' || chunkStr === '\r\n';
+          const hasEmbeddedNewlines = (chunkStr.includes('\n') || chunkStr.includes('\r')) && !isStandaloneReturn;
+          const isBulkPrintable = chunkStr.length > 12 && !chunkStr.includes('\x1b') && !/[\x00-\x1f]/.test(chunkStr);
+
+          if (hasEmbeddedNewlines || isBulkPrintable) {
+            this.handlePastedText(chunkStr);
+            return true;
+          }
+
+          this.rawStdinBuffer += chunkStr;
           this.rawStdinBuffer = this.rawStdinBuffer.replace(PASTE_REGEX, '');
 
-          // Strip complete SGR mouse sequences and process wheel events
-          this.rawStdinBuffer = this.rawStdinBuffer.replace(SGR_MOUSE_REGEX, (_match, btnStr) => {
+          // Strip complete SGR mouse sequences and process wheel events or clicks
+          this.rawStdinBuffer = this.rawStdinBuffer.replace(SGR_MOUSE_REGEX, (_match, btnStr, colStr, rowStr, mode) => {
             const btn = parseInt(btnStr, 10);
             if (btn === 64 || btn === 66 || btn === 68 || btn === 72 || btn === 80) {
               this.scrollUpCurrentView(3);
             } else if (btn === 65 || btn === 67 || btn === 69 || btn === 73 || btn === 81) {
               this.scrollDownCurrentView(3);
+            } else if (btn === 0 && mode === 'M') {
+              this.handleMouseClick(parseInt(colStr, 10), parseInt(rowStr, 10));
             }
             return '';
           });
@@ -1074,18 +1291,12 @@ export class MaosTui {
         }
 
         // Left button click, release, motion, or other button events:
-        // Handle left click press on the top rail minimize/expand chevron
+        // Handle left click press on the rail chevron (minimize/expand) or tabs
         if (btn === 0 && sgrMouseMatch[4] === 'M') {
           const col = parseInt(sgrMouseMatch[2], 10);
           const row = parseInt(sgrMouseMatch[3], 10);
-          const W = Math.max(20, (process.stdout.columns || 120) - 2);
-          const railW = this.getRailWidth(W);
-          if (railW > 0) {
-            const railStartCol = W - railW;
-            if (row >= 2 && row <= 4 && col >= railStartCol - 3) {
-              this.toggleSidebar();
-              return;
-            }
+          if (this.handleMouseClick(col, row)) {
+            return;
           }
         }
         return;
@@ -1974,7 +2185,7 @@ export class MaosTui {
         '  /test               Run the Canva 3D test command',
         '  /web                Open the MAOS web dashboard',
         '  /refresh            Refresh GPU, HERDR telemetry, and settings',
-        '  /sidebar            Toggle right-hand tab sidebar (Ctrl+\\)',
+        '  /sidebar, /collapse Toggle right-hand tab sidebar (Ctrl+\\)',
         '  /quit, /exit        Exit MAOS Oasis',
         '  /help               Show this command list',
         '',
@@ -2080,23 +2291,37 @@ export class MaosTui {
         return;
       }
 
-      const matched = this.detectedModels.find((m) => {
-        const id = m.id.toLowerCase();
-        const nm = m.name.toLowerCase();
-        return id === requested || id.endsWith(`:${requested}`) || id.includes(requested) || nm.includes(requested);
-      });
-
-      if (matched) {
-        this.selectedModel = matched.id;
-      } else if (requested === '2b' || requested === '9b') {
-        this.selectedModel = `gemma2:${requested}`;
-      } else if (requested === '4' || requested === 'e2b' || requested === 'gemma4') {
-        this.selectedModel = 'gemma4:e2b';
+      if (requested === '2b') {
+        const exact2b = this.detectedModels.find((m) => m.id === 'gemma2:2b' || m.id.endsWith(':2b'));
+        this.selectedModel = exact2b ? exact2b.id : 'gemma2:2b';
+      } else if (requested === '9b') {
+        const exact9b = this.detectedModels.find((m) => m.id === 'gemma2:9b' || m.id.endsWith(':9b'));
+        this.selectedModel = exact9b ? exact9b.id : 'gemma2:9b';
+      } else if (
+        requested === '4' ||
+        requested === 'e2b' ||
+        requested === 'gemma4' ||
+        requested === '4e2b' ||
+        requested === 'gemma4:e2b'
+      ) {
+        const exact4 = this.detectedModels.find((m) => m.id === 'gemma4:e2b' || m.id.includes('gemma4'));
+        this.selectedModel = exact4 ? exact4.id : 'gemma4:e2b';
       } else {
-        this.selectedModel = parts[0];
+        const matched = this.detectedModels.find((m) => {
+          const id = m.id.toLowerCase();
+          const nm = m.name.toLowerCase();
+          return id === requested || id.endsWith(`:${requested}`) || id.includes(requested) || nm.includes(requested);
+        });
+
+        if (matched) {
+          this.selectedModel = matched.id;
+        } else {
+          this.selectedModel = parts[0];
+        }
       }
 
-      this.statusMessage = `Selected model: ${this.selectedModel}.`;
+      const shortBadge = this.getModelBadgeShort(this.selectedModel);
+      this.statusMessage = `Selected model: ${this.selectedModel} (${shortBadge}).`;
       this.appendTranscript(this.statusMessage);
       this.render();
       return;
@@ -2144,7 +2369,7 @@ export class MaosTui {
       }
       return;
     }
-    if (['sidebar', 'collapse', 'rail'].includes(name)) {
+    if (['sidebar', 'collapse', 'rail', 'minimize', 'maximize', 'expand'].includes(name)) {
       this.toggleSidebar();
       return;
     }
@@ -2239,7 +2464,8 @@ export class MaosTui {
           stream: true,
           options: {
             temperature: 0.7,
-            num_predict: 256,
+            num_predict: 1024,
+            num_ctx: this.oasisConfig?.model?.contextTokens || 8192,
           },
         }),
         signal: controller.signal,
@@ -2744,15 +2970,13 @@ export class MaosTui {
   }
 
   public cycleModel(): void {
-    if (this.detectedModels.length === 0) {
-      this.selectedModel = this.selectedModel === 'gemma2:9b' ? 'gemma2:2b' : 'gemma2:9b';
-    } else {
-      const currIdx = this.detectedModels.findIndex((m) => m.id.toLowerCase() === this.selectedModel.toLowerCase());
-      const nextIdx = (currIdx + 1) % this.detectedModels.length;
-      const nextModel = this.detectedModels[nextIdx];
-      this.selectedModel = nextModel.id;
-    }
-    this.statusMessage = `Active model switched to ${this.selectedModel}.`;
+    const pool = this.detectedModels.length > 0 ? this.detectedModels : FALLBACK_MODELS;
+    const currIdx = pool.findIndex((m) => m.id.toLowerCase() === this.selectedModel.toLowerCase());
+    const nextIdx = (currIdx + 1) % pool.length;
+    const nextModel = pool[nextIdx];
+    this.selectedModel = nextModel.id;
+    const badge = this.getModelBadgeShort(this.selectedModel);
+    this.statusMessage = `Active model switched to ${this.selectedModel} (${badge}).`;
     if (this.activeTab === 1 && this.transcript.length > 0) this.appendTranscript(this.statusMessage);
     this.render();
   }
@@ -2918,7 +3142,10 @@ export class MaosTui {
         this.detectedModels.length > 0 &&
         !this.detectedModels.some((m) => m.id.toLowerCase() === this.selectedModel.toLowerCase())
       ) {
-        const preferred = this.detectedModels.find((m) => m.id.startsWith('gemma2:9b') || m.id.startsWith('gemma'));
+        const preferred =
+          this.detectedModels.find((m) => m.id.startsWith('gemma4:e2b')) ||
+          this.detectedModels.find((m) => m.id.startsWith('gemma2:9b')) ||
+          this.detectedModels.find((m) => m.id.startsWith('gemma'));
         if (preferred) this.selectedModel = preferred.id;
       }
     } catch {
@@ -3079,11 +3306,12 @@ export class MaosTui {
 
     if (railW) {
       const sidebar = Array.from({ length: bodyRows }, () => '');
+      const isMini = this.sidebarCollapsed || railW < 16;
 
       // Minimize / expand button indicator at the top of the rail
       if (bodyRows > 0) {
-        if (this.sidebarCollapsed) {
-          sidebar[0] = pad(centerTerminalLine(c.cyanBright('»'), railW), railW);
+        if (isMini) {
+          sidebar[0] = pad(centerTerminalLine(c.cyanBright(this.sidebarCollapsed ? '»' : '«'), railW), railW);
         } else {
           sidebar[0] = pad(`${c.cyanBright('«')} ${c.slateMuted('Collapse')}`, railW);
         }
@@ -3092,7 +3320,7 @@ export class MaosTui {
       const railItem = (row: number, icon: string, title: string, tab: number, quiet = false, rightText = '') => {
         if (row < 0 || row >= bodyRows) return;
         const selected = tab === this.activeTab && !quiet;
-        if (this.sidebarCollapsed) {
+        if (isMini) {
           const centered = centerTerminalLine(icon, railW);
           sidebar[row] = selected
             ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(centered), railW)
@@ -3165,14 +3393,7 @@ export class MaosTui {
               `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
               `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
               `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
-              `${c.boldWhite('Ctrl+G')} ${c.amber(
-                `Model ${
-                  this.selectedModel
-                    .split('/')
-                    .pop()
-                    ?.replace(/^gemma2?:?/i, '') || this.selectedModel
-                }`,
-              )}`,
+              `${c.boldWhite('Ctrl+G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
               `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
               `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
               ...(hasTranscriptSession ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
@@ -3185,14 +3406,7 @@ export class MaosTui {
                 `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
                 `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                 `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
-                `${c.boldWhite('Ctrl+G')} ${c.amber(
-                  `Model ${
-                    this.selectedModel
-                      .split('/')
-                      .pop()
-                      ?.replace(/^gemma2?:?/i, '') || this.selectedModel
-                  }`,
-                )}`,
+                `${c.boldWhite('Ctrl+G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                 `${c.boldWhite('Enter')} ${c.slateMuted('Send Message')}`,
                 `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
                 ...(this.chatMessages.length > 0 ? [`${c.boldWhite('PgUp/PgDn')} ${c.slateMuted('Scroll')}`] : []),
@@ -3203,19 +3417,12 @@ export class MaosTui {
               ? [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
                   `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
-                  `${c.boldWhite('P')} ${c.emerald('Preview')}`,
-                  `${c.boldWhite('G')} ${c.amber(
-                    `Model ${
-                      this.selectedModel
-                        .split('/')
-                        .pop()
-                        ?.replace(/^gemma2?:?/i, '') || this.selectedModel
-                    }`,
-                  )}`,
                   `${c.boldWhite('Enter')} ${c.cyan(this.swarmInspectorExpanded ? 'Collapse' : 'Expand')}`,
+                  `${c.boldWhite('↑/↓')} ${c.slateMuted('Select')}`,
+                  `${c.boldWhite('P')} ${c.emerald('Preview')}`,
+                  `${c.boldWhite('G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                   `${c.boldWhite('R')} ${c.cyanBright('Refresh')}`,
                   `${c.boldWhite('Esc')} ${c.slateMuted('Back')}`,
-                  `${c.boldWhite('↑/↓')} ${c.slateMuted('Select Agent')}`,
                   `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
                   `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
                 ]
@@ -3225,14 +3432,7 @@ export class MaosTui {
                   `${c.boldWhite('0-5')} ${c.slateMuted('Jump')}`,
                   `${c.boldWhite('/')} ${c.slateMuted('Prompt')}`,
                   `${c.boldWhite('C')} ${c.cyan('Chat')}`,
-                  `${c.boldWhite('G')} ${c.amber(
-                    `Model ${
-                      this.selectedModel
-                        .split('/')
-                        .pop()
-                        ?.replace(/^gemma2?:?/i, '') || this.selectedModel
-                    }`,
-                  )}`,
+                  `${c.boldWhite('G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                   `${c.boldWhite('P')} ${c.emerald('Preview')}`,
                   `${c.boldWhite('R')} ${c.cyan('Refresh')}`,
                   `${c.boldWhite('Q')} ${c.slateMuted('Quit')}`,

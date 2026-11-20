@@ -182,6 +182,27 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
       (tui as any).renderInternal();
       expect(tui.getActiveTab()).toBe(0);
     });
+
+    it('renders mini-rail without truncated text on narrow terminals (< 80 cols) even when expanded', () => {
+      const tui = new MaosTui(tmpDir);
+      tui.setSidebarCollapsed(false);
+
+      const origColumns = process.stdout.columns;
+      try {
+        Object.defineProperty(process.stdout, 'columns', { value: 60, configurable: true });
+        (tui as any).lastRenderedFrame = [];
+        (tui as any).renderInternal();
+
+        const frame = ((tui as any).lastRenderedFrame as string[]).join('\n');
+        // Must NOT contain truncated "« Co…" or "  ⌂…"
+        expect(frame).not.toContain('« Co…');
+        expect(frame).not.toContain('⌂…');
+        // Must contain crisp icons
+        expect(frame).toContain('⌂');
+      } finally {
+        Object.defineProperty(process.stdout, 'columns', { value: origColumns, configurable: true });
+      }
+    });
   });
 
   describe('Hotkeys, Prefix Mode & Slash Commands', () => {
@@ -247,7 +268,7 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
       }
     });
 
-    it('supports /sidebar and /collapse slash commands', async () => {
+    it('supports /sidebar, /collapse, /minimize, and /maximize slash commands', async () => {
       const tui = new MaosTui(tmpDir);
       expect(tui.isSidebarCollapsed()).toBe(false);
 
@@ -256,6 +277,75 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
 
       await (tui as any).executeCommandLine('/collapse');
       expect(tui.isSidebarCollapsed()).toBe(false);
+
+      await (tui as any).executeCommandLine('/minimize');
+      expect(tui.isSidebarCollapsed()).toBe(true);
+
+      await (tui as any).executeCommandLine('/maximize');
+      expect(tui.isSidebarCollapsed()).toBe(false);
+
+      await (tui as any).executeCommandLine('/expand');
+      expect(tui.isSidebarCollapsed()).toBe(true);
+    });
+
+    it('toggles sidebar and switches tabs via handleMouseClick', () => {
+      const tui = new MaosTui(tmpDir);
+      expect(tui.isSidebarCollapsed()).toBe(false);
+
+      // Click on chevron (row 3, col 110 on 120-col terminal)
+      const handled = tui.handleMouseClick(110, 3);
+      expect(handled).toBe(true);
+      expect(tui.isSidebarCollapsed()).toBe(true);
+
+      // Click chevron again to expand
+      tui.handleMouseClick(110, 3);
+      expect(tui.isSidebarCollapsed()).toBe(false);
+
+      // Click on Chat tab (row 8)
+      tui.handleMouseClick(110, 8);
+      expect(tui.getActiveTab()).toBe(2);
+
+      // Click on Swarm tab (row 10)
+      tui.handleMouseClick(110, 10);
+      expect(tui.getActiveTab()).toBe(3);
+
+      // Click on Telemetry tab (row 12)
+      tui.handleMouseClick(110, 12);
+      expect(tui.getActiveTab()).toBe(4);
+
+      // Click on Event Log tab (row 14)
+      tui.handleMouseClick(110, 14);
+      expect(tui.getActiveTab()).toBe(5);
+
+      // Click on Settings tab (row 34)
+      tui.handleMouseClick(110, 34);
+      expect(tui.getActiveTab()).toBe(0);
+
+      // Click back on Dashboard tab (row 6)
+      tui.handleMouseClick(110, 6);
+      expect(tui.getActiveTab()).toBe(1);
+
+      // Click outside the rail (col 10)
+      const outsideHandled = tui.handleMouseClick(10, 3);
+      expect(outsideHandled).toBe(false);
+    });
+
+    it('handles raw SGR mouse click sequence via stdin stream buffering', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      try {
+        expect(tui.isSidebarCollapsed()).toBe(false);
+
+        // Inject raw SGR left click on row 3 (chevron)
+        process.stdin.emit('data', '\x1b[<0;110;3M');
+        expect(tui.isSidebarCollapsed()).toBe(true);
+
+        // Inject raw SGR left click on row 3 again to expand
+        process.stdin.emit('data', '\x1b[<0;110;3M');
+        expect(tui.isSidebarCollapsed()).toBe(false);
+      } finally {
+        (tui as any).cleanupKeyboard();
+      }
     });
 
     it('advertises Ctrl+\\ in footer hotkey hints and S in prefix banner', () => {
