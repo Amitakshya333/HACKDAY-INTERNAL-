@@ -1,28 +1,19 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* Basic styling for the Tic Tac Toe board */
 body {
-  font-family: system-ui, -apple-system, sans-serif;
-  background: #0f172a;
-  color: #f8fafc;
+  font-family: sans-serif;
+}
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 100px);
+  grid-template-rows: repeat(3, 100px);
+  gap: 5px;
+}
+.cell {
+  width: 100px;
+  height: 100px;
+  border: 1px solid black;
   display: flex;
-  align-items: center;
   justify-content: center;
-  min-height: 100vh;
-}
-#app {
-  width: 90vw;
-  max-width: 960px;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  padding: 24px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-}
-header h1 { color: #38bdf8; font-size: 24px; margin-bottom: 8px; }
-#task-badge { color: #94a3b8; font-size: 14px; margin-bottom: 16px; }
-#display-area {
-  min-height: 300px;
-  background: #090d16;
-  border: 1px solid #1e293b;
-  border-radius: 4px;
-  margin-bottom: 16px;
+  align-items: center;
+  font-size: 30px;
 }
