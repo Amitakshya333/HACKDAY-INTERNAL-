@@ -765,6 +765,56 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
     }
   }
 
+  // Auto-wire exported scripts into root index.html if generated across workers and unreferenced
+  const rootHtmlPath = path.join(outputDir, 'index.html');
+  if (fs.existsSync(rootHtmlPath)) {
+    try {
+      let htmlContent = fs.readFileSync(rootHtmlPath, 'utf-8');
+      const jsFiles = Array.from(filesMap.values())
+        .map((f) => f.path)
+        .filter((p) => p.endsWith('.js') && !p.endsWith('.test.js') && !p.endsWith('.spec.js'));
+
+      const missingScripts: string[] = [];
+      for (const jsFile of jsFiles) {
+        const baseName = path.basename(jsFile);
+        const isReferenced =
+          htmlContent.includes(`src="${jsFile}"`) ||
+          htmlContent.includes(`src="./${jsFile}"`) ||
+          htmlContent.includes(`src='${jsFile}'`) ||
+          htmlContent.includes(`src='./${jsFile}'`) ||
+          htmlContent.includes(`src="${baseName}"`) ||
+          htmlContent.includes(`src="./${baseName}"`);
+
+        if (!isReferenced) {
+          missingScripts.push(jsFile);
+        }
+      }
+
+      if (missingScripts.length > 0) {
+        const scriptTags = missingScripts.map((s) => `  <script src="${s}"></script>`).join('\n');
+        if (htmlContent.includes('</body>')) {
+          htmlContent = htmlContent.replace('</body>', `${scriptTags}\n</body>`);
+        } else {
+          htmlContent += `\n${scriptTags}\n`;
+        }
+        fs.writeFileSync(rootHtmlPath, htmlContent, 'utf-8');
+        const rootDistHtml = path.join(distDir, 'index.html');
+        if (fs.existsSync(path.dirname(rootDistHtml))) {
+          fs.writeFileSync(rootDistHtml, htmlContent, 'utf-8');
+        }
+        const updatedStat = fs.statSync(rootHtmlPath);
+        filesMap.set('index.html', {
+          path: 'index.html',
+          lines: htmlContent.split('\n').length,
+          sizeBytes: updatedStat.size,
+          workerId: filesMap.get('index.html')?.workerId || 'synthesizer',
+        });
+      }
+    } catch {
+      /* non-fatal auto-wiring */
+    }
+  }
+
   const files = Array.from(filesMap.values());
   let entrypoint: string | undefined;
   let entrypointType: 'html' | 'node' | 'python' | 'unknown' = 'unknown';

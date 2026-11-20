@@ -66,7 +66,9 @@ describe('Stale preview & TUI regressions', () => {
     fs.writeFileSync(path.join(wt, 'snake.js'), '// snake');
     manifest = exportBuiltArtifacts(proj, [worker({ worktreePath: wt, baseCommit })]);
     expect(manifest.files.map((f) => f.path).sort()).toEqual(['index.html', 'snake.js']);
-    expect(fs.readFileSync(path.join(proj, 'output', 'index.html'), 'utf-8')).toBe('<html>snake</html>');
+    const exportedHtml = fs.readFileSync(path.join(proj, 'output', 'index.html'), 'utf-8');
+    expect(exportedHtml).toContain('<html>snake</html>');
+    expect(exportedHtml).toContain('<script src="snake.js"></script>');
   });
 
   it('parses porcelain status lines whose first column is a space (" M file")', () => {
@@ -177,5 +179,47 @@ describe('Stale preview & TUI regressions', () => {
     expect(tui.isMouseCaptureEnabled()).toBe(true);
     expect(tui.toggleMouseCapture()).toBe(false);
     expect(tui.toggleMouseCapture()).toBe(true);
+  });
+
+  it('auto-wires unreferenced scripts into index.html across multiple workers', () => {
+    const wt1 = path.join(tmp, 'wt1');
+    const wt2 = path.join(tmp, 'wt2');
+    fs.mkdirSync(wt1);
+    fs.mkdirSync(wt2);
+    git(wt1, 'init', '-q');
+    git(wt2, 'init', '-q');
+
+    fs.writeFileSync(path.join(wt1, 'init'), '1');
+    git(wt1, 'add', '.');
+    git(wt1, 'commit', '-q', '-m', 'root');
+    const base1 = git(wt1, 'rev-parse', 'HEAD');
+
+    fs.writeFileSync(path.join(wt2, 'init'), '1');
+    git(wt2, 'add', '.');
+    git(wt2, 'commit', '-q', '-m', 'root');
+    const base2 = git(wt2, 'rev-parse', 'HEAD');
+
+    // Worker 1 creates index.html loading only src/ui.js
+    fs.writeFileSync(
+      path.join(wt1, 'index.html'),
+      '<!DOCTYPE html><html><head></head><body><script src="src/ui.js"></script></body></html>',
+    );
+    fs.writeFileSync(path.join(wt1, 'ui.js'), 'console.log("ui");');
+
+    // Worker 2 creates game.js in its own worktree
+    fs.writeFileSync(path.join(wt2, 'game.js'), 'console.log("game engine");');
+
+    const proj = path.join(tmp, 'proj');
+    fs.mkdirSync(proj);
+
+    const manifest = exportBuiltArtifacts(proj, [
+      worker({ worktreePath: wt1, baseCommit: base1, agentId: 'Worker-1' }),
+      worker({ worktreePath: wt2, baseCommit: base2, agentId: 'Worker-2' }),
+    ]);
+
+    const resultHtml = fs.readFileSync(path.join(proj, 'output', 'index.html'), 'utf-8');
+    expect(resultHtml).toContain('<script src="src/ui.js"></script>');
+    expect(resultHtml).toContain('<script src="game.js"></script>');
+    expect(manifest.files.map((f) => f.path)).toContain('game.js');
   });
 });

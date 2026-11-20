@@ -386,17 +386,40 @@ describe('TUI and Ignite Resilience Suite', () => {
     });
 
     it('appends exactly one assistant response without duplication on sendGemmaChatMessage', async () => {
-      const tui = new MaosTui(process.cwd());
-      expect(tui.getChatMessages()).toHaveLength(0);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        ({
+          ok: true,
+          status: 200,
+          body: {
+            getReader() {
+              let done = false;
+              return {
+                async read() {
+                  if (done) return { done: true, value: undefined };
+                  done = true;
+                  return { done: false, value: new TextEncoder().encode('{"response":"Hello user"}\n') };
+                },
+              };
+            },
+          },
+        }) as any;
 
-      await (tui as any).sendGemmaChatMessage('Hello Gemma');
+      try {
+        const tui = new MaosTui(process.cwd());
+        expect(tui.getChatMessages()).toHaveLength(0);
 
-      const messages = tui.getChatMessages();
-      expect(messages).toHaveLength(2);
-      expect(messages[0].sender).toBe('user');
-      expect(messages[0].text).toBe('Hello Gemma');
-      expect(messages[1].sender).toBe('gemma');
-      expect(messages[1].text.length).toBeGreaterThan(0);
+        await (tui as any).sendGemmaChatMessage('Hello Gemma');
+
+        const messages = tui.getChatMessages();
+        expect(messages).toHaveLength(2);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe('Hello Gemma');
+        expect(messages[1].sender).toBe('gemma');
+        expect(messages[1].text.length).toBeGreaterThan(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it('accumulates streamed tokens into exactly one assistant message without duplication', async () => {

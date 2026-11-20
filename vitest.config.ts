@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     root: path.resolve(__dirname),
     include: ['tests/**/*.test.ts'],
+    exclude: ['**/.maos/**', '**/worktrees/**', '**/node_modules/**'],
     setupFiles: [path.resolve(__dirname, 'tests/setup-vitest.ts')],
     environment: 'node',
     // Several suites exercise intentionally process-global state (model

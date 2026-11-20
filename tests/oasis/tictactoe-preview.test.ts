@@ -240,7 +240,7 @@ describe('⚡ Sovereign Swarm Tic-Tac-Toe & Context Continuity Suite', () => {
       expect(fs.existsSync(path.join(distDir, 'apps', 'canva-3d', 'index.html'))).toBe(false);
 
       // Root index.html must be the real tic-tac-toe, not the minecraft leak
-      expect(fs.readFileSync(path.join(outDir, 'index.html'), 'utf-8')).toBe('<html>Tic Tac Toe Real</html>');
+      expect(fs.readFileSync(path.join(outDir, 'index.html'), 'utf-8')).toContain('<html>Tic Tac Toe Real</html>');
       expect(manifest.entrypoint).toBe(path.join('output', 'index.html'));
       expect(manifest.files.some((f) => f.path.startsWith('apps/'))).toBe(false);
     });
