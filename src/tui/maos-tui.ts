@@ -546,6 +546,8 @@ export class MaosTui {
   private prefixTimeout: NodeJS.Timeout | null = null;
   private previewServer: http.Server | null = null;
   private previewPort: number = 3030;
+  // When false, terminal mouse reporting is off so native click-drag text selection works (F3 toggles).
+  private mouseCapture: boolean = process.env.MAOS_TUI_MOUSE !== '0';
 
   private rawStdinBuffer: string = '';
   private rawStdinFlushTimer: NodeJS.Timeout | null = null;
@@ -812,6 +814,23 @@ export class MaosTui {
       : 'Sidebar expanded (Ctrl+\\ to minimize).';
     this.render();
     return this.sidebarCollapsed;
+  }
+
+  public isMouseCaptureEnabled(): boolean {
+    return this.mouseCapture;
+  }
+
+  /** F3: switch between TUI mouse clicks and native terminal text selection. */
+  public toggleMouseCapture(): boolean {
+    this.mouseCapture = !this.mouseCapture;
+    if (!process.env.VITEST && Boolean(process.stdout.isTTY)) {
+      process.stdout.write(this.mouseCapture ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l');
+    }
+    this.statusMessage = this.mouseCapture
+      ? 'Mouse clicks ON (F3 to enable text selection; Shift+drag also selects).'
+      : 'Text selection ON: click-drag to select/copy (F3 to restore mouse clicks).';
+    this.render();
+    return this.mouseCapture;
   }
 
   public getTerminalWidth(): number {
@@ -1092,7 +1111,8 @@ export class MaosTui {
       '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l',
     );
     // In live interactive TTY sessions (not test runners), enable SGR mouse click reporting so clicks on « Collapse and tabs work seamlessly
-    if (!process.env.VITEST && Boolean(process.stdout.isTTY)) {
+    // F3 (or MAOS_TUI_MOUSE=0) turns this off so native click-drag selection works.
+    if (this.mouseCapture && !process.env.VITEST && Boolean(process.stdout.isTTY)) {
       process.stdout.write('\x1b[?1000h\x1b[?1006h');
     }
 
@@ -1494,6 +1514,8 @@ export class MaosTui {
         key = { name: 'end', ctrl: false, meta: false, shift: false };
       } else if (str === '\x1bOQ' || str === '\x1b[12~' || str === '\x1b[1;2Q') {
         key = { name: 'f2', ctrl: false, meta: false, shift: false };
+      } else if (str === '\x1bOR' || str === '\x1b[13~') {
+        key = { name: 'f3', ctrl: false, meta: false, shift: false };
       } else if (str === '\x17') {
         key = { name: 'w', ctrl: true, meta: false, shift: false };
       } else if (str === '\x1b\x7f' || str === '\x1b\x08') {
@@ -1581,6 +1603,7 @@ export class MaosTui {
         key.name !== 'return' &&
         key.name !== 'backspace' &&
         key.name !== 'f2' &&
+        key.name !== 'f3' &&
         str !== '\x1b[12~' &&
         str !== '\x1bOQ' &&
         str !== '\x1b[1;2Q' &&
@@ -1608,6 +1631,10 @@ export class MaosTui {
         str === '\x1bm'
       ) {
         this.toggleSidebar();
+        return;
+      }
+      if (key.name === 'f3') {
+        this.toggleMouseCapture();
         return;
       }
       if ((key.ctrl && key.name === 'p') || str === '\x10') {
@@ -3332,14 +3359,22 @@ export class MaosTui {
             path.resolve(this.projectRoot, 'index.html'),
           );
         } else {
-          if (activeOutputDir) {
-            candidates.push(path.resolve(activeOutputDir, relPath));
+          // Reject ../ traversal: a candidate must stay inside its base directory.
+          const within = (base: string) => {
+            const resolved = path.resolve(base, relPath);
+            return resolved.startsWith(path.resolve(base) + path.sep) ? resolved : null;
+          };
+          // Built output first so a stale project-root file never shadows the new build.
+          const bases = [
+            ...(activeOutputDir ? [activeOutputDir] : []),
+            path.resolve(this.projectRoot, 'output'),
+            path.resolve(this.projectRoot, 'dist-preview'),
+            this.projectRoot,
+          ];
+          for (const base of bases) {
+            const resolved = within(base);
+            if (resolved) candidates.push(resolved);
           }
-          candidates.push(
-            path.resolve(this.projectRoot, relPath),
-            path.resolve(this.projectRoot, 'output', relPath),
-            path.resolve(this.projectRoot, 'dist-preview', relPath),
-          );
         }
 
         let targetFile: string | null = null;
@@ -3765,9 +3800,10 @@ export class MaosTui {
       // Minimize / expand button indicator at the top of the rail
       if (bodyRows > 0) {
         if (isMini) {
-          sidebar[0] = pad(centerTerminalLine(c.cyanBright(this.sidebarCollapsed ? '»' : '«'), railW), railW);
+          // Rail sits on the right edge: « pulls it open (leftward), » pushes it closed (rightward).
+          sidebar[0] = pad(centerTerminalLine(c.cyanBright(this.sidebarCollapsed ? '«' : '»'), railW), railW);
         } else {
-          sidebar[0] = pad(`${c.cyanBright('«')} ${c.slateMuted('Collapse (F2)')}`, railW);
+          sidebar[0] = pad(`${c.cyanBright('»')} ${c.slateMuted('Collapse (F2)')}`, railW);
         }
       }
 
@@ -3800,7 +3836,7 @@ export class MaosTui {
       const step = bodyRows >= 16 ? 2 : 1;
       const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
       railItem(navTop, '⌂', 'Dashboard', 1);
-      railItem(navTop + step, '💬', 'Chat', 2);
+      railItem(navTop + step, '✉', 'Chat', 2);
       railItem(
         navTop + step * 2,
         '❖',
@@ -3846,6 +3882,7 @@ export class MaosTui {
           ? [
               `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
               `${c.boldWhite('F2 / Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
+              `${c.boldWhite('F3')} ${c.slateMuted(this.mouseCapture ? 'Select Text' : 'Mouse Clicks')}`,
               `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
               `${c.boldWhite('Ctrl+G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
               `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
@@ -3926,7 +3963,16 @@ export class MaosTui {
         rows.push(...wrapTerminalLine(runningRow, transcriptWidth));
       }
       const promptRows = 4;
-      const viewportRows = Math.max(1, bodyRows - promptRows);
+      // Keep the brand visible during runs: full logo on tall screens, a one-line badge otherwise.
+      const brandRows: string[] = [];
+      if (bodyRows >= 26 && W >= MAOS_OASIS_LOGO_WIDTH) {
+        for (const row of MAOS_OASIS_LOGO_ROWS) brandRows.push(center(c.slateText(row)));
+        brandRows.push('');
+      } else if (bodyRows >= 12) {
+        brandRows.push(center(`${c.boldWhite('MAOS')} ${c.cyanBright('OASIS')} ${c.slateMuted('· Sovereign Swarm')}`));
+      }
+      lines.push(...brandRows);
+      const viewportRows = Math.max(1, bodyRows - promptRows - brandRows.length);
       this.transcriptViewportRows = viewportRows;
       this.transcriptRenderedRowCount = rows.length;
       this.transcriptScrollOffset = Math.max(

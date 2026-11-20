@@ -156,6 +156,15 @@ export function ensureWorktree(agentId: string, branchName: string, cwd: string)
     fs.mkdirSync(baseDir, { recursive: true });
   }
 
+  // A fresh `git init` has an unborn HEAD, which `worktree add ... HEAD` rejects. Give it an empty root commit.
+  if (gitSafe(['rev-parse', '--verify', '-q', 'HEAD'], cwd) === null) {
+    const commit = ['commit', '--allow-empty', '-q', '-m', 'chore: initial commit (MAOS Oasis)'];
+    if (gitSafe(commit, cwd) === null) {
+      // No git identity configured: use a local placeholder so the swarm can still start.
+      gitSafe(['-c', 'user.name=MAOS Oasis', '-c', 'user.email=oasis@localhost', ...commit], cwd);
+    }
+  }
+
   // Add worktree using force + quiet + create/reset branch (-B) to current HEAD
   // This avoids branch collisions, checkout collisions, and noisy progress output on stderr.
   try {

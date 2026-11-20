@@ -27,7 +27,7 @@ describe('⚡ Sovereign Swarm Tic-Tac-Toe & Context Continuity Suite', () => {
   });
 
   describe('Tic-Tac-Toe Core Engine Verification', () => {
-    const { checkWinner, getAvailableMoves, minimax, WIN_COMBOS } = require('../../output/game.js');
+    const { checkWinner, getAvailableMoves, minimax, WIN_COMBOS } = require('../fixtures/tictactoe-game.js');
 
     it('has all 8 standard winning combinations', () => {
       expect(WIN_COMBOS).toHaveLength(8);

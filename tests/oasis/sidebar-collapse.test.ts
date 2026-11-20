@@ -97,7 +97,7 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
   });
 
   describe('Visual Aesthetics & Icon Glyphs', () => {
-    it('renders expanded sidebar with « minimize chevron, refined icons, full titles and badges', () => {
+    it('renders expanded sidebar with » minimize chevron, refined icons, full titles and badges', () => {
       const tui = new MaosTui(tmpDir);
       tui.setSidebarCollapsed(false);
 
@@ -105,15 +105,17 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
       (tui as any).renderInternal();
 
       const frame = ((tui as any).lastRenderedFrame as string[]).join('\n');
+      const plain = frame.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
 
-      // Chevron minimize indicator at top of rail
-      expect(frame).toContain('«');
-      expect(frame).toContain('Collapse');
+      // Rail is on the right edge: collapsing pushes it right, so the chevron points right
+      expect(plain).toContain('» Collapse (F2)');
+      expect(plain).not.toContain('« Collapse');
 
       // Refined icons and titles
       expect(frame).toContain('⌂');
       expect(frame).toContain('Dashboard');
-      expect(frame).toContain('💬');
+      expect(frame).toContain('✉');
+      expect(frame).not.toContain('💬');
       expect(frame).toContain('Chat');
       expect(frame).toContain('❖');
       expect(frame).toContain('Swarm');
@@ -134,12 +136,13 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
 
       const frame = ((tui as any).lastRenderedFrame as string[]).join('\n');
 
-      // Top expand indicator »
-      expect(frame).toContain('»');
+      // Top expand indicator « (expanding pulls the right-edge rail leftward)
+      const plain = frame.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+      expect(plain).toMatch(/│\s*«\s*$/m);
 
       // Mini-rail icons must be present
       expect(frame).toContain('⌂');
-      expect(frame).toContain('💬');
+      expect(frame).toContain('✉');
       expect(frame).toContain('❖');
       expect(frame).toContain('▥');
       expect(frame).toContain('☰');
@@ -196,6 +199,7 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
         const frame = ((tui as any).lastRenderedFrame as string[]).join('\n');
         // Must NOT contain truncated "« Co…" or "  ⌂…"
         expect(frame).not.toContain('« Co…');
+        expect(frame).not.toContain('» Co…');
         expect(frame).not.toContain('⌂…');
         // Must contain crisp icons
         expect(frame).toContain('⌂');

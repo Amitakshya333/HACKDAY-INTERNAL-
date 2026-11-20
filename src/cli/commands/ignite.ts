@@ -37,6 +37,7 @@ import {
 import { computeSymmetricGridPlan } from '../../integrations/herdr';
 import { getMessageBus } from '../../core/message-bus';
 import { renderPanel, getBrandBadge, renderDivider } from '../../utils/ui';
+import { getLatestSessionId, loadSession, saveSession } from '../../oasis/session-manager';
 
 // ─── Options ─────────────────────────────────────────────────────
 
@@ -82,6 +83,8 @@ export interface IgniteWorker {
   worktreePath: string;
   paneId?: string;
   taskFile: string;
+  /** Worktree HEAD when the worker started; only changes after it are exported. */
+  baseCommit?: string;
 }
 
 export const DEFAULT_GEMMA_MODEL = process.env.MAOS_GEMMA_MODEL || 'gemma2:9b';
@@ -384,8 +387,14 @@ function herdrPaneRun(paneId: string, command: string): void {
 
 function gitDiffStat(cwd: string, branch: string): string {
   try {
-    const out = execSync(`git diff --stat main...${branch}`, { cwd, encoding: 'utf-8', timeout: 15000 });
-    return out.trim() || '(no diff vs main)';
+    // Compare with the checked-out branch (where merges land), not a hardcoded "main".
+    const out = execSync(`git diff --stat HEAD...${branch}`, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 15000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return out.trim() || '(no diff vs current branch)';
   } catch {
     try {
       const out = execSync(`git diff --stat HEAD -- .`, { cwd, encoding: 'utf-8', timeout: 15000 });
@@ -676,13 +685,14 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
         });
         const uncommitted = statusOut
           .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => line.slice(3).trim());
+          .filter((line) => line.trim())
+          // Porcelain is "XY path" (or "XY old -> new"); trimming first would eat the status column.
+          .map((line) => line.slice(3).split(' -> ').pop()!.trim().replace(/^"|"$/g, ''));
 
         let committed: string[] = [];
         try {
-          const diffOut = execSync('git diff --name-only main...HEAD', {
+          const range = w.baseCommit ? `${w.baseCommit}..HEAD` : 'main...HEAD';
+          const diffOut = execSync(`git diff --name-only --diff-filter=d ${range}`, {
             cwd: w.worktreePath,
             encoding: 'utf-8',
             timeout: 5000,
@@ -692,17 +702,7 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
             .map((l) => l.trim())
             .filter(Boolean);
         } catch {
-          try {
-            const logOut = execSync('git log -n 5 --name-only --pretty=""', {
-              cwd: w.worktreePath,
-              encoding: 'utf-8',
-              timeout: 5000,
-            });
-            committed = logOut
-              .split('\n')
-              .map((l) => l.trim())
-              .filter(Boolean);
-          } catch {}
+          // No usable base: export only uncommitted work, never files inherited from HEAD.
         }
         workerFiles = Array.from(new Set([...uncommitted, ...committed]));
       } catch {
@@ -710,9 +710,12 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
       }
     }
 
-    if (workerFiles.length === 0) {
+    if (!isGit) {
+      // Plain directory: everything in it is worker output.
       scanDir(w.worktreePath, w.worktreePath, w.agentId);
     } else {
+      // Git worktree: export only what this worker changed. Falling back to the whole tree
+      // re-published files inherited from HEAD (the stale tic-tac-toe preview bug).
       for (const relPath of workerFiles) {
         const fullPath = path.join(w.worktreePath, relPath);
         if (!fs.existsSync(fullPath)) continue;
@@ -811,6 +814,82 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
   } catch {}
 
   return manifest;
+}
+
+/** Marker a worker writes when its process exits (see worker-agent.ts). */
+export function workerDoneMarker(taskFile: string): string {
+  return `${taskFile}.done`;
+}
+
+export const IGNITE_WORKER_TIMEOUT_MS = Number(process.env.MAOS_IGNITE_TIMEOUT_MS) || 15 * 60 * 1000;
+
+/** Resolves once every worker wrote its done marker or lost its pane, or on timeout. */
+export async function waitForWorkers(
+  workers: IgniteWorker[],
+  timeoutMs: number,
+  listPaneIds: () => Promise<string[]> = async () => (await new CliHerdrPaneReader().listPanes()).map((p) => p.paneId),
+  pollMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const reported = new Set<string>();
+  while (Date.now() < deadline) {
+    let paneIds: string[] | null = null;
+    try {
+      paneIds = await listPaneIds();
+    } catch {
+      paneIds = null; // transient Herdr hiccup: rely on markers this round
+    }
+    const pending = workers.filter((w) => {
+      const done =
+        fs.existsSync(workerDoneMarker(w.taskFile)) || (paneIds !== null && !paneIds.includes(w.paneId || ''));
+      if (done && !reported.has(w.agentId)) {
+        reported.add(w.agentId);
+        console.log(chalk.green(`  ✔ ${w.agentId} finished (${reported.size}/${workers.length})`));
+      }
+      return !done;
+    });
+    if (pending.length === 0) return;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  console.log(chalk.yellow(`  ⚠ Worker wait timed out after ${Math.round(timeoutMs / 1000)}s; exporting what exists.`));
+}
+
+/** Points the current Oasis session's task at this build so the preview server serves it. */
+export function recordBuildInSession(
+  cwd: string,
+  goal: string,
+  workers: IgniteWorker[],
+  manifest: BuiltArtifactManifest,
+): void {
+  try {
+    const sessionId = getLatestSessionId(cwd);
+    const session = sessionId ? loadSession(cwd, sessionId) : null;
+    if (!session) return;
+    let task = session.tasks[session.tasks.length - 1];
+    if (!task || task.goal.trim() !== goal.trim() || task.status !== 'active') {
+      task = {
+        id: `task-${session.tasks.length + 1}`,
+        goal,
+        workers: [],
+        outputDir: '',
+        previewEntry: '',
+        status: 'active',
+        filesWritten: [],
+        issues: [],
+      };
+      session.tasks.push(task);
+    }
+    task.workers = workers.map((w) => w.agentId);
+    task.outputDir = manifest.outputDir;
+    task.previewEntry = manifest.entrypoint ? manifest.entrypoint.replace(/\\/g, '/') : '';
+    task.filesWritten = manifest.files.map((f) => f.path);
+    task.status = manifest.files.length > 0 ? 'completed' : 'failed';
+    if (manifest.files.length === 0) task.issues.push('Workers produced no files.');
+    session.updatedAt = new Date().toISOString();
+    saveSession(cwd, session);
+  } catch {
+    /* session bookkeeping must never fail the build */
+  }
 }
 
 // ─── Main ignite flow ────────────────────────────────────────────
@@ -953,7 +1032,14 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
     }).start();
     try {
       const wt = ensureWorktree(agentId, branch, cwd);
+      let baseCommit: string | undefined;
+      try {
+        baseCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: wt.worktreePath, encoding: 'utf-8' }).trim();
+      } catch {
+        baseCommit = undefined;
+      }
       const taskFile = path.join(igniteDir, `${agentId}.md`);
+      fs.rmSync(workerDoneMarker(taskFile), { force: true });
       fs.writeFileSync(
         taskFile,
         `# ${task.title}\n\n${task.description}\n\n## Worker\n- agent: ${agentId}\n- branch: ${branch}\n- worktree: ${wt.worktreePath}\n\n## Instructions\n1. Implement ONLY this subtask inside the worktree.\n2. Run the build/tests until green.\n3. Do not touch files outside your scope. The healer watches this pane.\n`,
@@ -1062,7 +1148,16 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
       } catch {
         /* continue if pane run fails initially */
       }
-      workers.push({ index: i, title: task.title, agentId, branch, worktreePath: wt.worktreePath, paneId, taskFile });
+      workers.push({
+        index: i,
+        title: task.title,
+        agentId,
+        branch,
+        worktreePath: wt.worktreePath,
+        paneId,
+        taskFile,
+        baseCommit,
+      });
       step.succeed(chalk.green(`Worker ${agentId} live in ${paneId} (${branch})`));
     } catch (err: unknown) {
       step.fail(
@@ -1115,14 +1210,14 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   );
 
   if (!watch) {
-    // Single sweep, then merge report.
-    await new Promise((r) => setTimeout(r, 4500));
+    // Wait for workers to finish (local models need minutes), then sweep and merge.
+    await waitForWorkers(workers, IGNITE_WORKER_TIMEOUT_MS);
     await healer.healOnce();
     healer.stop();
     for (const w of workers) {
       if (w.paneId) void herdrPaneClose(w.paneId);
     }
-    printMergeReport(cwd, workers, options.yes === true);
+    recordBuildInSession(cwd, goal, workers, printMergeReport(cwd, workers, options.yes === true));
     return;
   }
 
@@ -1148,7 +1243,7 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
         `Healer: ${stats.polls} polls, ${stats.patchesApplied} patches applied, ${stats.patchesSkippedLowConfidence} withheld, ${stats.failures} errors.`,
       ),
     );
-    printMergeReport(cwd, workers, options.yes === true);
+    recordBuildInSession(cwd, goal, workers, printMergeReport(cwd, workers, options.yes === true));
     cleanupSignals();
     if (!noExit) {
       process.exit(0);
@@ -1175,7 +1270,9 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
           `[${now}] workers ${live}/${workers.length} live │ heals ${stats.patchesApplied} │ withheld ${stats.patchesSkippedLowConfidence} │ traces ${stats.tracesSeen}`,
         ),
       );
-      if (live === 0) {
+      if (workers.every((w) => fs.existsSync(workerDoneMarker(w.taskFile)))) {
+        shutdown();
+      } else if (live === 0) {
         zeroLiveCount++;
         // If all workers are closed/finished across 2 polling cycles, auto-shutdown gracefully
         if (zeroLiveCount >= 2) {
