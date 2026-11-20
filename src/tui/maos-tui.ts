@@ -1261,7 +1261,7 @@ export class MaosTui {
         return;
       }
 
-      // Synthesize key object for raw terminal sequences (Ctrl+Arrows, Delete, Home, End)
+      // Synthesize key object for raw terminal sequences (Ctrl+Arrows, Delete, Home, End, F2, Alt+Keys)
       if (str === '\x1b[1;5D' || str === '\x1b[5D' || str === '\x1b\x1b[D' || str === '\x1bb') {
         key = { name: 'left', ctrl: true, meta: false, shift: false };
       } else if (str === '\x1b[1;5C' || str === '\x1b[5C' || str === '\x1b\x1b[C' || str === '\x1bf') {
@@ -1272,6 +1272,16 @@ export class MaosTui {
         key = { name: 'home', ctrl: false, meta: false, shift: false };
       } else if (str === '\x1b[F' || str === '\x1b[4~') {
         key = { name: 'end', ctrl: false, meta: false, shift: false };
+      } else if (str === '\x1bOQ' || str === '\x1b[12~' || str === '\x1b[1;2Q') {
+        key = { name: 'f2', ctrl: false, meta: false, shift: false };
+      } else if (str === '\x17') {
+        key = { name: 'w', ctrl: true, meta: false, shift: false };
+      } else if (str === '\x1b\x7f' || str === '\x1b\x08') {
+        key = { name: 'backspace', ctrl: false, meta: true, shift: false };
+      } else if (str === '\x1bs' || str === '\x1bS') {
+        key = { name: 's', ctrl: false, meta: true, shift: false };
+      } else if (str === '\x1bm' || str === '\x1bM') {
+        key = { name: 'm', ctrl: false, meta: true, shift: false };
       }
 
       // ── MOUSE AND ANSI ESCAPE SEQUENCE FILTER ────────────────────────────
@@ -1349,13 +1359,24 @@ export class MaosTui {
         key.name !== 'tab' &&
         key.name !== 'escape' &&
         key.name !== 'return' &&
-        key.name !== 'backspace'
+        key.name !== 'backspace' &&
+        key.name !== 'f2'
       ) {
         return;
       }
 
-      // Global Direct Ctrl Shortcuts (Work universally from any view, including chat/input)
-      if ((key.ctrl && (key.name === '\\' || key.name === 'backslash')) || str === '\x1c') {
+      // Global Direct Shortcuts (Work universally from any view, including chat/input)
+      if (
+        key.name === 'f2' ||
+        str === '\x1bOQ' ||
+        str === '\x1b[12~' ||
+        str === '\x1b[1;2Q' ||
+        (key.ctrl && (key.name === '\\' || key.name === 'backslash')) ||
+        str === '\x1c' ||
+        (key.meta && (key.name === 's' || key.name === 'm')) ||
+        str === '\x1bs' ||
+        str === '\x1bm'
+      ) {
         this.toggleSidebar();
         return;
       }
@@ -1444,7 +1465,7 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (actionKey === 's' || actionKey === '\\') {
+        if (actionKey === 's' || actionKey === 'm' || actionKey === '\\') {
           this.toggleSidebar();
           return;
         }
@@ -1557,19 +1578,20 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
-          this.modalInput.deleteBackward();
+        const isCtrlBackspace =
+          (Boolean(key.ctrl) && (key.name === 'backspace' || key.name === 'h' || key.name === 'w')) ||
+          (Boolean(key.meta) && key.name === 'backspace') ||
+          (Boolean(key.ctrl) && (str === '\x08' || str === '\x7f')) ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08';
+        if (isCtrlBackspace) {
+          this.modalInput.deleteWordBackward();
           this.render();
           return;
         }
-        if (
-          (key.ctrl && key.name === 'w') ||
-          (key.meta && key.name === 'backspace') ||
-          str === '\x17' ||
-          str === '\x1b\x7f' ||
-          str === '\x1b\x08'
-        ) {
-          this.modalInput.deleteWordBackward();
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.modalInput.deleteBackward();
           this.render();
           return;
         }
@@ -1687,19 +1709,20 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
-          this.modalInput.deleteBackward();
+        const isCtrlBackspace =
+          (Boolean(key.ctrl) && (key.name === 'backspace' || key.name === 'h' || key.name === 'w')) ||
+          (Boolean(key.meta) && key.name === 'backspace') ||
+          (Boolean(key.ctrl) && (str === '\x08' || str === '\x7f')) ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08';
+        if (isCtrlBackspace) {
+          this.modalInput.deleteWordBackward();
           this.render();
           return;
         }
-        if (
-          (key.ctrl && key.name === 'w') ||
-          (key.meta && key.name === 'backspace') ||
-          str === '\x17' ||
-          str === '\x1b\x7f' ||
-          str === '\x1b\x08'
-        ) {
-          this.modalInput.deleteWordBackward();
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.modalInput.deleteBackward();
           this.render();
           return;
         }
@@ -1861,19 +1884,20 @@ export class MaosTui {
           this.render();
           return;
         }
-        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
-          this.chatInput.deleteBackward();
+        const isCtrlBackspace =
+          (Boolean(key.ctrl) && (key.name === 'backspace' || key.name === 'h' || key.name === 'w')) ||
+          (Boolean(key.meta) && key.name === 'backspace') ||
+          (Boolean(key.ctrl) && (str === '\x08' || str === '\x7f')) ||
+          str === '\x17' ||
+          str === '\x1b\x7f' ||
+          str === '\x1b\x08';
+        if (isCtrlBackspace) {
+          this.chatInput.deleteWordBackward();
           this.render();
           return;
         }
-        if (
-          (key.ctrl && key.name === 'w') ||
-          (key.meta && key.name === 'backspace') ||
-          str === '\x17' ||
-          str === '\x1b\x7f' ||
-          str === '\x1b\x08'
-        ) {
-          this.chatInput.deleteWordBackward();
+        if (key.name === 'backspace' || str === '\x08' || str === '\x7f') {
+          this.chatInput.deleteBackward();
           this.render();
           return;
         }
@@ -2137,6 +2161,28 @@ export class MaosTui {
       this.reportCommand('Type a goal or /help to see commands.', true);
       return;
     }
+
+    if (input.startsWith('/')) {
+      let earlyParts: string[];
+      try {
+        earlyParts = splitCommandLine(input.slice(1));
+      } catch (err) {
+        this.reportCommand(err instanceof Error ? err.message : String(err), true);
+        return;
+      }
+
+      const earlyName = (earlyParts[0] || '').toLowerCase();
+      // Sidebar collapse / expand commands: execute in-place without resetting tab or appending noise
+      if (
+        ['sidebar', 'collapse', 'rail', 'minimize', 'maximize', 'expand', 'min', 'max', 'panel', 'tabs'].includes(
+          earlyName,
+        )
+      ) {
+        this.toggleSidebar();
+        return;
+      }
+    }
+
     this.activeTab = 1;
     this.transcriptScrollOffset = 0;
     this.appendTranscript(`› ${input}`);
@@ -2369,7 +2415,9 @@ export class MaosTui {
       }
       return;
     }
-    if (['sidebar', 'collapse', 'rail', 'minimize', 'maximize', 'expand'].includes(name)) {
+    if (
+      ['sidebar', 'collapse', 'rail', 'minimize', 'maximize', 'expand', 'min', 'max', 'panel', 'tabs'].includes(name)
+    ) {
       this.toggleSidebar();
       return;
     }
@@ -3313,7 +3361,7 @@ export class MaosTui {
         if (isMini) {
           sidebar[0] = pad(centerTerminalLine(c.cyanBright(this.sidebarCollapsed ? '»' : '«'), railW), railW);
         } else {
-          sidebar[0] = pad(`${c.cyanBright('«')} ${c.slateMuted('Collapse')}`, railW);
+          sidebar[0] = pad(`${c.cyanBright('«')} ${c.slateMuted('Collapse (F2)')}`, railW);
         }
       }
 
@@ -3391,7 +3439,7 @@ export class MaosTui {
         : this.activeTab === 1
           ? [
               `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
-              `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
+              `${c.boldWhite('F2 / Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
               `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
               `${c.boldWhite('Ctrl+G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
               `${c.boldWhite('Enter')} ${c.slateMuted('Run Goal / Chat')}`,
@@ -3404,7 +3452,7 @@ export class MaosTui {
           : this.activeTab === 2
             ? [
                 `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
-                `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
+                `${c.boldWhite('F2 / Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                 `${c.boldWhite('Ctrl+P')} ${c.emerald('Preview')}`,
                 `${c.boldWhite('Ctrl+G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                 `${c.boldWhite('Enter')} ${c.slateMuted('Send Message')}`,
@@ -3416,19 +3464,19 @@ export class MaosTui {
             : this.activeTab === 3
               ? [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
-                  `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
+                  `${c.boldWhite('F2')} ${c.slateMuted('Sidebar')}`,
                   `${c.boldWhite('Enter')} ${c.cyan(this.swarmInspectorExpanded ? 'Collapse' : 'Expand')}`,
-                  `${c.boldWhite('↑/↓')} ${c.slateMuted('Select')}`,
                   `${c.boldWhite('P')} ${c.emerald('Preview')}`,
-                  `${c.boldWhite('G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                   `${c.boldWhite('R')} ${c.cyanBright('Refresh')}`,
                   `${c.boldWhite('Esc')} ${c.slateMuted('Back')}`,
+                  `${c.boldWhite('↑/↓')} ${c.slateMuted('Select')}`,
+                  `${c.boldWhite('G')} ${c.amber(`Model ${this.getModelBadgeShort()}`)}`,
                   `${c.boldWhite('Ctrl+B')} ${c.cyanBright('Prefix')}`,
                   `${c.boldWhite('Ctrl+C')} ${c.slateMuted('Quit')}`,
                 ]
               : [
                   `${c.boldWhite('Tab')} ${c.slateMuted('Switch View')}`,
-                  `${c.boldWhite('Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
+                  `${c.boldWhite('F2 / Ctrl+\\')} ${c.slateMuted(W >= 140 ? 'Toggle Sidebar' : 'Sidebar')}`,
                   `${c.boldWhite('0-5')} ${c.slateMuted('Jump')}`,
                   `${c.boldWhite('/')} ${c.slateMuted('Prompt')}`,
                   `${c.boldWhite('C')} ${c.cyan('Chat')}`,

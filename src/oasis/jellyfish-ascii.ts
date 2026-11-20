@@ -58,19 +58,128 @@ export const palette = {
   boldWhite: color.bold.hex('#FFFFFF'),
 };
 
-// Small header mascot stays pixel-art; the animated viewport uses the full simulation.
-export function generateCompactJellyfishRawFrame(_t = 0, cols = 20, rows = 8): string {
-  const art = [
-    '       .------.       ',
-    '     .´  ::  ::`.     ',
-    '    /  ::  ::  ::\\    ',
-    "   '~~~~~~~~~~~~~~~~'  ",
-    '      ;        ;      ',
-    '     /|\\      /|\\     ',
-    '      |        |      ',
-    '      :        :      ',
-  ];
-  return Array.from({ length: rows }, (_, y) => (art[y] || '').padEnd(cols).slice(0, cols)).join('\n');
+// Compact Jellyfish Mascot dynamically simulated with Aurelia aurita physics:
+// - Curved umbrella crown apex contracting and expanding with squeeze(t)
+// - Translucent bell canopy with upper gonad arches
+// - Signature cloverleaf horseshoe gonads glowing brightly during contraction stroke
+// - Scalloped dynamic undulating rim margin with travelling sinusoidal phase wave
+// - 4 trailing marginal tentacles with wave lag and 2 central frilled oral mouth arms
+export function generateCompactJellyfishRawFrame(t = 0, cols = 20, rows = 8): string {
+  const c = squeeze(t);
+  const drift = 0.5 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const cx = cols / 2 + drift;
+  const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
+
+  const half = cols * 0.38 - 1.4 * c;
+  const rimRow = Math.max(2, Math.min(rows - 3, 3));
+
+  // Row 0: Smooth arched crown apex
+  const w0 = Math.max(2, Math.round(half * 0.45));
+  const cL = Math.round(cx - w0);
+  const cR = Math.round(cx + w0);
+  for (let x = cL; x <= cR; x++) {
+    if (x >= 0 && x < cols) grid[0][x] = x === cL || x === cR ? '.' : '-';
+  }
+
+  // Row 1: Upper bell curve and upper gonad arches
+  const w1 = Math.max(3, Math.round(half * 0.78));
+  const uL = Math.round(cx - w1);
+  const uR = Math.round(cx + w1);
+  if (uL >= 0 && uL < cols) grid[1][uL] = '.';
+  if (uL + 1 < cols) grid[1][uL + 1] = '-';
+  if (uL + 2 < cols) grid[1][uL + 2] = "'";
+  if (uR >= 0 && uR < cols) grid[1][uR] = '.';
+  if (uR - 1 >= 0) grid[1][uR - 1] = '-';
+  if (uR - 2 >= 0) grid[1][uR - 2] = "'";
+
+  // Upper gonad lobes
+  const g1L = Math.round(cx - w1 * 0.45);
+  const g1R = Math.round(cx + w1 * 0.45);
+  if (g1L - 1 > uL + 2 && g1L + 1 < g1R - 1) {
+    grid[1][g1L - 1] = '(';
+    grid[1][g1L] = c > 0.5 ? '*' : ':';
+    grid[1][g1L + 1] = ')';
+  }
+  if (g1R + 1 < uR - 2 && g1R - 1 > g1L + 1) {
+    grid[1][g1R - 1] = '(';
+    grid[1][g1R] = c > 0.5 ? '*' : ':';
+    grid[1][g1R + 1] = ')';
+  }
+
+  // Row 2: Mid bell with 4 cloverleaf horseshoe gonads
+  const w2 = Math.max(4, Math.round(half * 0.95));
+  const mL = Math.round(cx - w2);
+  const mR = Math.round(cx + w2);
+  if (mL >= 0 && mL < cols) grid[2][mL] = '(';
+  if (mR >= 0 && mR < cols) grid[2][mR] = ')';
+
+  // Horseshoe gonads: ( )  ( )
+  const gOffset = Math.max(2, Math.round(w2 * 0.46));
+  const gL = Math.round(cx - gOffset);
+  const gR = Math.round(cx + gOffset);
+  const glow = c > 0.6 ? '*' : '+';
+  if (gL - 1 > mL) grid[2][gL - 1] = '(';
+  if (gL > mL && gL < mR) grid[2][gL] = glow;
+  if (gL + 1 < gR - 1) grid[2][gL + 1] = ')';
+
+  if (gR - 1 > gL + 1) grid[2][gR - 1] = '(';
+  if (gR > mL && gR < mR) grid[2][gR] = glow;
+  if (gR + 1 < mR) grid[2][gR + 1] = ')';
+
+  // Row 3: Scalloped dynamic undulating rim margin
+  const rL = Math.round(cx - half);
+  const rR = Math.round(cx + half);
+  if (rL >= 0 && rL < cols) grid[rimRow][rL] = "'";
+  if (rR >= 0 && rR < cols) grid[rimRow][rR] = "'";
+  for (let x = rL + 1; x < rR; x++) {
+    if (x >= 0 && x < cols) {
+      const wave = Math.sin((x - cx) * 1.4 + t * 4.2);
+      grid[rimRow][x] = wave > 0.25 ? '~' : wave < -0.25 ? "'" : '-';
+    }
+  }
+
+  // Row 4 to rows - 1: Trailing tentacles
+  const tentU = [-0.85, -0.42, 0.42, 0.85];
+  for (let i = 0; i < tentU.length; i++) {
+    const u = tentU[i];
+    let prevX = cx + u * half;
+    for (let y = rimRow + 1; y < rows; y++) {
+      const d = y - rimRow;
+      const lagT = t - d * 0.12;
+      const lagC = squeeze(lagT);
+      const lagHalf = cols * 0.38 - 1.4 * lagC;
+      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const wob = Math.sin(d * 0.8 - t * 3.0 + i * 1.5);
+      const curX = Math.round(lagCx + u * lagHalf * (1 - d * 0.06) + (0.3 + d * 0.1) * wob);
+      if (curX >= 0 && curX < cols) {
+        let ch = '|';
+        const dx = curX - prevX;
+        if (d === rows - rimRow - 1) ch = ':';
+        else if (dx > 0.4) ch = '\\';
+        else if (dx < -0.4) ch = '/';
+        else if (Math.abs(wob) > 0.65) ch = wob > 0 ? ')' : '(';
+        grid[y][curX] = ch;
+      }
+      prevX = curX;
+    }
+  }
+
+  // Central oral arms frilled with ';'
+  for (let i = 0; i < 2; i++) {
+    const s = i === 0 ? -1 : 1;
+    for (let y = rimRow + 1; y < rows; y++) {
+      const d = y - rimRow;
+      const lagT = t - d * 0.14;
+      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
+      const tw = Math.sin(d * 1.0 - t * 2.8 + i * 2.0);
+      const curX = Math.round(lagCx + s * 1.0 + 0.4 * tw);
+      if (curX >= 0 && curX < cols && grid[y][curX] === ' ') {
+        grid[y][curX] = d === rows - rimRow - 1 ? ':' : ';';
+      }
+    }
+  }
+
+  return grid.map((r) => r.join('').padEnd(cols).slice(0, cols)).join('\n');
 }
 
 export function generateJellyfishRawFrame(t = 0, cols = meta.cols, rows = meta.rows): string {
@@ -233,10 +342,14 @@ export function generateJellyfishRawFrame(t = 0, cols = meta.cols, rows = meta.r
 
 export function colorJellyfishChar(ch: string, rowIndex: number, rimRow: number): string {
   if (ch === ' ') return ch;
+  if (ch === '·') return palette.slateMuted(ch);
   if (ch === '.' || ch === ':')
     return rowIndex <= rimRow && (ch !== '.' || rowIndex >= 3) ? color.hex('#38BDF8')(ch) : palette.slateMuted(ch);
-  if (ch === ';' || ch === '(' || ch === ')' || ch === '|' || ch === '/' || ch === '\\') return palette.emerald(ch);
-  if (ch === '~' || ch === "'" || ch === '_' || ch === '-') return palette.cyanBright(ch);
+  if (ch === ';') return palette.emerald(ch);
+  if (ch === '|' || ch === '/' || ch === '\\') return palette.cyan(ch);
+  if (ch === '(' || ch === ')') return rowIndex <= rimRow ? palette.violetBright(ch) : palette.cyanBright(ch);
+  if (ch === '~' || ch === "'") return palette.cyanBright(ch);
+  if (ch === '-' || ch === '_') return rowIndex < rimRow ? palette.violet(ch) : palette.cyanBright(ch);
   if (ch === '+' || ch === '=') return palette.cyan(ch);
   if (ch === '*' || ch === '#' || ch === '@' || ch === '%') return palette.boldWhite(ch);
   return rowIndex <= rimRow ? color.hex('#0EA5E9')(ch) : palette.cyan(ch);

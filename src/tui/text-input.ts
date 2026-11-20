@@ -278,26 +278,39 @@ export function renderInputContentWithCursor(
     return `${cursorColor('█')} ${c.slateMuted(clippedPlaceholder)}`;
   }
 
-  const chars = Array.from(GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
+  // High-performance windowing for large texts (> width * 3 chars)
+  // Slices only the region around cursor to avoid Intl.Segmenter lag on multi-kilobyte prompts
+  let subText = text;
+  let subCursor = cursor;
+  let preWindowOffset = 0;
+  if (text.length > width * 3) {
+    const margin = Math.max(width * 2, 100);
+    preWindowOffset = Math.max(0, cursor - margin);
+    const windowEnd = Math.min(text.length, cursor + margin);
+    subText = text.slice(preWindowOffset, windowEnd);
+    subCursor = cursor - preWindowOffset;
+  }
+
+  const chars = Array.from(GRAPHEME_SEGMENTER.segment(subText), ({ segment }) => segment);
   const totalGraphemes = chars.length;
 
   let graphemeCursor = totalGraphemes;
   let byteCount = 0;
   for (let i = 0; i < totalGraphemes; i++) {
-    if (byteCount >= cursor) {
+    if (byteCount >= subCursor) {
       graphemeCursor = i;
       break;
     }
     byteCount += chars[i].length;
   }
-  if (cursor >= text.length) {
+  if (subCursor >= subText.length) {
     graphemeCursor = totalGraphemes;
   }
 
   const graphemeCells = chars.map((ch) => terminalCellWidth(ch));
   const totalCells = graphemeCells.reduce((sum, w) => sum + w, 0) + 1; // +1 for cursor
 
-  if (totalCells <= width) {
+  if (totalCells <= width && preWindowOffset === 0) {
     let rendered = '';
     for (let i = 0; i < totalGraphemes; i++) {
       if (i === graphemeCursor) {
@@ -332,11 +345,11 @@ export function renderInputContentWithCursor(
   }
 
   let windowStr = '';
-  if (leftGrapheme > 0) {
+  if (leftGrapheme > 0 || preWindowOffset > 0) {
     windowStr += c.slateMuted('…');
   }
 
-  let usedCells = leftGrapheme > 0 ? 1 : 0;
+  let usedCells = leftGrapheme > 0 || preWindowOffset > 0 ? 1 : 0;
   for (let i = leftGrapheme; i < totalGraphemes; i++) {
     const cellW = graphemeCells[i] || 1;
     if (usedCells + cellW > width - 1) {

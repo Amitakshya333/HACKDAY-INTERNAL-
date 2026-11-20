@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { MaosTui } from '../../src/tui/maos-tui';
+import { generateCompactJellyfishRawFrame, renderJellyfishMascot } from '../../src/oasis/jellyfish-ascii';
 import {
   detectLocalModels,
   FALLBACK_MODELS,
@@ -202,6 +203,142 @@ describe('Large Paste Handling & Gemma 4 E2B Suite', () => {
       expect((tui as any).chatInputText).toContain('Hello Gemma! Can you explain');
       expect((tui as any).statusMessage).toContain('Pasted');
       expect((tui as any).chatMessages.length).toBe(0); // Not auto-submitted
+
+      (tui as any).cleanupKeyboard();
+    });
+
+    it('handles Windows Terminal > 5 KiB paste warning payloads (up to 15 KiB) cleanly without freezing', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      (tui as any).activeTab = 1;
+      (tui as any).modalInputText = '';
+
+      // Create a 12 KiB payload (well above the 5 KiB Windows Terminal warning threshold)
+      const lines = Array.from(
+        { length: 120 },
+        (_, i) =>
+          `Step ${i + 1}: Execute autonomous agent verification without cloud egress on loopback Ollama port 11434.`,
+      );
+      const payload = lines.join('\n');
+      expect(payload.length).toBeGreaterThan(10000);
+
+      const t0 = performance.now();
+      process.stdin.emit('data', `\x1b[200~${payload}\x1b[201~`);
+      const elapsed = performance.now() - t0;
+
+      expect(elapsed).toBeLessThan(500);
+      expect((tui as any).modalInputText).toContain('Step 1: Execute autonomous agent');
+      expect((tui as any).modalInputText).toContain('Step 120: Execute autonomous agent');
+      expect((tui as any).statusMessage).toContain('Pasted');
+
+      (tui as any).cleanupKeyboard();
+    });
+  });
+
+  // ── 3. Ctrl+Backspace Word-by-Word Deletion ──────────────────────────────
+  describe('Ctrl+Backspace Word-by-Word Deletion', () => {
+    it('deletes word-by-word in prompt box on Ctrl+Backspace', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      (tui as any).activeTab = 1;
+      (tui as any).modalInputText = 'build and deploy canva 3d';
+
+      const keyHandler = (tui as any).keypressHandler;
+
+      // Ctrl+Backspace deletes "3d"
+      keyHandler('\x08', { name: 'backspace', ctrl: true, meta: false, shift: false });
+      expect((tui as any).modalInputText).toBe('build and deploy canva ');
+
+      // Ctrl+Backspace deletes "canva"
+      keyHandler('\x08', { name: 'backspace', ctrl: true, meta: false, shift: false });
+      expect((tui as any).modalInputText).toBe('build and deploy ');
+
+      // Normal Backspace deletes a single character (letter-by-letter)
+      keyHandler('\x7f', { name: 'backspace', ctrl: false, meta: false, shift: false });
+      expect((tui as any).modalInputText).toBe('build and deploy');
+
+      // Ctrl+W deletes "deploy"
+      keyHandler('\x17', { name: 'w', ctrl: true, meta: false, shift: false });
+      expect((tui as any).modalInputText).toBe('build and ');
+
+      (tui as any).cleanupKeyboard();
+    });
+
+    it('deletes word-by-word in Chat view on Ctrl+Backspace', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      (tui as any).activeTab = 2;
+      (tui as any).chatInputText = 'what is local gemma model';
+
+      const keyHandler = (tui as any).keypressHandler;
+
+      // Ctrl+Backspace deletes "model"
+      keyHandler('\x08', { name: 'backspace', ctrl: true, meta: false, shift: false });
+      expect((tui as any).chatInputText).toBe('what is local gemma ');
+
+      // Ctrl+Backspace deletes "gemma"
+      keyHandler('\x08', { name: 'backspace', ctrl: true, meta: false, shift: false });
+      expect((tui as any).chatInputText).toBe('what is local ');
+
+      (tui as any).cleanupKeyboard();
+    });
+
+    it('deletes word-by-word in modalMode (e.g. ignite modal) on Ctrl+Backspace', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      (tui as any).modalMode = 'ignite';
+      (tui as any).modalInputText = 'build spatial studio';
+
+      const keyHandler = (tui as any).keypressHandler;
+
+      // Ctrl+Backspace deletes "studio"
+      keyHandler('\x08', { name: 'backspace', ctrl: true, meta: false, shift: false });
+      expect((tui as any).modalInputText).toBe('build spatial ');
+
+      (tui as any).cleanupKeyboard();
+    });
+  });
+
+  // ── 4. Moon Jellyfish Anti-Static Simulation Verification ─────────────────
+  describe('Moon Jellyfish Dynamic Simulation & Anti-Static Suite', () => {
+    it('generates non-static, actively pulsating frames across time t', () => {
+      const frame0 = generateCompactJellyfishRawFrame(0.0, 20, 8);
+      const frame1 = generateCompactJellyfishRawFrame(0.5, 20, 8);
+      const frame2 = generateCompactJellyfishRawFrame(1.0, 20, 8);
+      const frame3 = generateCompactJellyfishRawFrame(1.5, 20, 8);
+
+      // Distinct frames at different times: NEVER a static hardcoded array!
+      expect(frame0).not.toBe(frame1);
+      expect(frame1).not.toBe(frame2);
+      expect(frame2).not.toBe(frame3);
+
+      // Bell rim contractions and relaxations
+      expect(frame0).toMatch(/~|'|-/);
+      expect(frame1).toMatch(/~|'|-/);
+
+      // Trailing tentacles and frilled oral arms
+      expect(frame0).toMatch(/\||\/|\\|\(|\)/);
+      expect(frame0).toContain(';');
+
+      // Colored mascot is also dynamic
+      const mascot0 = renderJellyfishMascot(0.0, 20, 8).join('\n');
+      const mascot1 = renderJellyfishMascot(0.6, 20, 8).join('\n');
+      expect(mascot0).not.toBe(mascot1);
+    });
+
+    it('toggles sidebar collapse instantly with F2 keypress', () => {
+      const tui = new MaosTui(tmpDir);
+      (tui as any).setupKeyboard();
+      expect(tui.isSidebarCollapsed()).toBe(false);
+
+      const keyHandler = (tui as any).keypressHandler;
+      // Press F2 to collapse
+      keyHandler('\x1bOQ', { name: 'f2', ctrl: false, meta: false, shift: false });
+      expect(tui.isSidebarCollapsed()).toBe(true);
+
+      // Press F2 again to expand
+      keyHandler('\x1bOQ', { name: 'f2', ctrl: false, meta: false, shift: false });
+      expect(tui.isSidebarCollapsed()).toBe(false);
 
       (tui as any).cleanupKeyboard();
     });
