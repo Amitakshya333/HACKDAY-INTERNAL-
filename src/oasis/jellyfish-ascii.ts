@@ -59,124 +59,108 @@ export const palette = {
 };
 
 // Compact Jellyfish Mascot dynamically simulated with Aurelia aurita physics:
-// - Curved umbrella crown apex contracting and expanding with squeeze(t)
-// - Translucent bell canopy with upper gonad arches
+// - Curved umbrella crown apex contracting and expanding symmetrically with squeeze(t)
+// - Translucent bell canopy with horseshoe gonad arches
 // - Signature cloverleaf horseshoe gonads glowing brightly during contraction stroke
 // - Scalloped dynamic undulating rim margin with travelling sinusoidal phase wave
 // - 4 trailing marginal tentacles with wave lag and 2 central frilled oral mouth arms
 export function generateCompactJellyfishRawFrame(t = 0, cols = 20, rows = 8): string {
   const c = squeeze(t);
-  const drift = 0.5 * Math.sin((2 * Math.PI * t) / (5 * P));
-  const cx = cols / 2 + drift;
+  const drift = 0.2 * Math.sin((2 * Math.PI * t) / (5 * P));
+  const cx = (cols - 1) / 2 + drift;
   const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
 
-  const half = cols * 0.38 - 1.4 * c;
   const rimRow = Math.max(2, Math.min(rows - 3, 3));
 
   // Row 0: Smooth arched crown apex
-  const w0 = Math.max(2, Math.round(half * 0.45));
-  const cL = Math.round(cx - w0);
-  const cR = Math.round(cx + w0);
-  for (let x = cL; x <= cR; x++) {
-    if (x >= 0 && x < cols) grid[0][x] = x === cL || x === cR ? '.' : '-';
-  }
+  const w0 = Math.max(3, Math.round(5.0 - 1.0 * c));
+  const l0 = Math.max(0, Math.round(cx - w0));
+  const r0 = Math.min(cols - 1, Math.round(cx + w0));
+  grid[0][l0] = '.';
+  grid[0][r0] = '.';
+  for (let x = l0 + 1; x < r0; x++) grid[0][x] = '-';
 
-  // Row 1: Upper bell curve and upper gonad arches
-  const w1 = Math.max(3, Math.round(half * 0.78));
-  const uL = Math.round(cx - w1);
-  const uR = Math.round(cx + w1);
-  if (uL >= 0 && uL < cols) grid[1][uL] = '.';
-  if (uL + 1 < cols) grid[1][uL + 1] = '-';
-  if (uL + 2 < cols) grid[1][uL + 2] = "'";
-  if (uR >= 0 && uR < cols) grid[1][uR] = '.';
-  if (uR - 1 >= 0) grid[1][uR - 1] = '-';
-  if (uR - 2 >= 0) grid[1][uR - 2] = "'";
+  // Row 1: Upper bell curve and horseshoe gonad lobes
+  const w1 = Math.max(5, Math.round(7.2 - 1.2 * c));
+  const l1 = Math.max(0, Math.round(cx - w1));
+  const r1 = Math.min(cols - 1, Math.round(cx + w1));
+  grid[1][l1] = '.';
+  if (l1 + 1 < cols) grid[1][l1 + 1] = '-';
+  if (l1 + 2 < cols) grid[1][l1 + 2] = "'";
+  grid[1][r1] = '.';
+  if (r1 - 1 >= 0) grid[1][r1 - 1] = '-';
+  if (r1 - 2 >= 0) grid[1][r1 - 2] = "'";
 
-  // Upper gonad lobes
-  const g1L = Math.round(cx - w1 * 0.45);
-  const g1R = Math.round(cx + w1 * 0.45);
-  if (g1L - 1 > uL + 2 && g1L + 1 < g1R - 1) {
-    grid[1][g1L - 1] = '(';
-    grid[1][g1L] = c > 0.5 ? '*' : ':';
-    grid[1][g1L + 1] = ')';
-  }
-  if (g1R + 1 < uR - 2 && g1R - 1 > g1L + 1) {
-    grid[1][g1R - 1] = '(';
-    grid[1][g1R] = c > 0.5 ? '*' : ':';
-    grid[1][g1R + 1] = ')';
-  }
-
-  // Row 2: Mid bell with 4 cloverleaf horseshoe gonads
-  const w2 = Math.max(4, Math.round(half * 0.95));
-  const mL = Math.round(cx - w2);
-  const mR = Math.round(cx + w2);
-  if (mL >= 0 && mL < cols) grid[2][mL] = '(';
-  if (mR >= 0 && mR < cols) grid[2][mR] = ')';
-
-  // Horseshoe gonads: ( )  ( )
-  const gOffset = Math.max(2, Math.round(w2 * 0.46));
-  const gL = Math.round(cx - gOffset);
-  const gR = Math.round(cx + gOffset);
   const glow = c > 0.6 ? '*' : '+';
-  if (gL - 1 > mL) grid[2][gL - 1] = '(';
-  if (gL > mL && gL < mR) grid[2][gL] = glow;
-  if (gL + 1 < gR - 1) grid[2][gL + 1] = ')';
+  const g1Char = c > 0.5 ? glow : ':';
+  grid[1][Math.round(cx - 3.5)] = '(';
+  grid[1][Math.round(cx - 2.5)] = g1Char;
+  grid[1][Math.round(cx - 1.5)] = ')';
+  grid[1][Math.round(cx + 1.5)] = '(';
+  grid[1][Math.round(cx + 2.5)] = g1Char;
+  grid[1][Math.round(cx + 3.5)] = ')';
 
-  if (gR - 1 > gL + 1) grid[2][gR - 1] = '(';
-  if (gR > mL && gR < mR) grid[2][gR] = glow;
-  if (gR + 1 < mR) grid[2][gR + 1] = ')';
+  // Row 2: Mid bell with cloverleaf horseshoe gonads
+  const w2 = Math.max(6, Math.round(8.2 - 1.0 * c));
+  const l2 = Math.max(0, Math.round(cx - w2));
+  const r2 = Math.min(cols - 1, Math.round(cx + w2));
+  grid[2][l2] = '(';
+  grid[2][r2] = ')';
+  grid[2][Math.round(cx - 4.5)] = '(';
+  grid[2][Math.round(cx - 3.5)] = glow;
+  grid[2][Math.round(cx - 2.5)] = ')';
+  grid[2][Math.round(cx + 2.5)] = '(';
+  grid[2][Math.round(cx + 3.5)] = glow;
+  grid[2][Math.round(cx + 4.5)] = ')';
 
   // Row 3: Scalloped dynamic undulating rim margin
-  const rL = Math.round(cx - half);
-  const rR = Math.round(cx + half);
-  if (rL >= 0 && rL < cols) grid[rimRow][rL] = "'";
-  if (rR >= 0 && rR < cols) grid[rimRow][rR] = "'";
-  for (let x = rL + 1; x < rR; x++) {
-    if (x >= 0 && x < cols) {
-      const wave = Math.sin((x - cx) * 1.4 + t * 4.2);
-      grid[rimRow][x] = wave > 0.25 ? '~' : wave < -0.25 ? "'" : '-';
-    }
+  const w3 = Math.max(7, Math.round(8.8 - 0.8 * c));
+  const l3 = Math.max(0, Math.round(cx - w3));
+  const r3 = Math.min(cols - 1, Math.round(cx + w3));
+  grid[rimRow][l3] = "'";
+  grid[rimRow][r3] = "'";
+  for (let x = l3 + 1; x < r3; x++) {
+    const wave = Math.sin((x - cx) * 1.5 + t * 4.0);
+    grid[rimRow][x] = wave > 0.3 ? '~' : wave < -0.3 ? "'" : '-';
   }
 
-  // Row 4 to rows - 1: Trailing tentacles
-  const tentU = [-0.85, -0.42, 0.42, 0.85];
-  for (let i = 0; i < tentU.length; i++) {
-    const u = tentU[i];
-    let prevX = cx + u * half;
-    for (let y = rimRow + 1; y < rows; y++) {
-      const d = y - rimRow;
-      const lagT = t - d * 0.12;
-      const lagC = squeeze(lagT);
-      const lagHalf = cols * 0.38 - 1.4 * lagC;
-      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
-      const wob = Math.sin(d * 0.8 - t * 3.0 + i * 1.5);
-      const curX = Math.round(lagCx + u * lagHalf * (1 - d * 0.06) + (0.3 + d * 0.1) * wob);
-      if (curX >= 0 && curX < cols) {
-        let ch = '|';
-        const dx = curX - prevX;
-        if (d === rows - rimRow - 1) ch = ':';
-        else if (dx > 0.4) ch = '\\';
-        else if (dx < -0.4) ch = '/';
-        else if (Math.abs(wob) > 0.65) ch = wob > 0 ? ')' : '(';
-        grid[y][curX] = ch;
-      }
-      prevX = curX;
-    }
-  }
+  // Rows 4 to rows - 1: Trailing marginal tentacles and central frilled oral arms
+  for (let y = rimRow + 1; y < rows; y++) {
+    const d = y - rimRow;
+    const lagT = t - d * 0.15;
 
-  // Central oral arms frilled with ';'
-  for (let i = 0; i < 2; i++) {
-    const s = i === 0 ? -1 : 1;
-    for (let y = rimRow + 1; y < rows; y++) {
-      const d = y - rimRow;
-      const lagT = t - d * 0.14;
-      const lagCx = cols / 2 + 0.5 * Math.sin((2 * Math.PI * lagT) / (5 * P));
-      const tw = Math.sin(d * 1.0 - t * 2.8 + i * 2.0);
-      const curX = Math.round(lagCx + s * 1.0 + 0.4 * tw);
-      if (curX >= 0 && curX < cols && grid[y][curX] === ' ') {
-        grid[y][curX] = d === rows - rimRow - 1 ? ':' : ';';
+    // Symmetrical central frilled oral arms
+    const oOffset = 1.2 + 0.3 * Math.cos(d * 0.8 - lagT * 2.5);
+    const oL = Math.round(cx - oOffset);
+    const oR = Math.round(cx + oOffset);
+    if (oL >= 0 && oL < cols) grid[y][oL] = y === rows - 1 ? ':' : ';';
+    if (oR >= 0 && oR < cols) grid[y][oR] = y === rows - 1 ? ':' : ';';
+
+    // 4 Symmetrical outer and inner marginal tentacles
+    const tOuter = 6.2 * (1 - d * 0.06);
+    const tInner = 3.4 * (1 - d * 0.05);
+    const wobO = 0.5 * Math.sin(d * 0.9 - lagT * 2.8);
+    const wobI = 0.5 * Math.cos(d * 0.9 - lagT * 2.8);
+
+    const xOL = Math.round(cx - tOuter + wobO);
+    const xOR = Math.round(cx + tOuter - wobO);
+    const xIL = Math.round(cx - tInner + wobI);
+    const xIR = Math.round(cx + tInner - wobI);
+
+    const setTent = (x: number, isOuter: boolean, isLeft: boolean) => {
+      if (x < 0 || x >= cols || grid[y][x] !== ' ') return;
+      if (y === rows - 1) {
+        grid[y][x] = ':';
+      } else {
+        const sign = isLeft ? -1 : 1;
+        const w = isOuter ? wobO : wobI;
+        grid[y][x] = Math.abs(w) > 0.25 ? (w * sign > 0 ? ')' : '(') : '|';
       }
-    }
+    };
+    setTent(xOL, true, true);
+    setTent(xIL, false, true);
+    setTent(xIR, false, false);
+    setTent(xOR, true, false);
   }
 
   return grid.map((r) => r.join('').padEnd(cols).slice(0, cols)).join('\n');

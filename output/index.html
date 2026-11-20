@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚡ Oasis Cyberpunk Tic-Tac-Toe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="game-container">
+    <header class="header">
+      <div class="logo-badge">MAOS SWARM ARCADE</div>
+      <h1 class="title">NEON TIC-TAC-TOE</h1>
+      <p class="subtitle">Sovereign Edge Gaming • Local AI Opponent</p>
+    </header>
+
+    <div class="controls-bar">
+      <div class="mode-select">
+        <button id="btn-mode-ai" class="mode-btn active" data-mode="ai">🤖 vs Gemma AI</button>
+        <button id="btn-mode-pvp" class="mode-btn" data-mode="pvp">👥 2 Players (Local)</button>
+      </div>
+      <div class="difficulty-select">
+        <label for="difficulty">AI Level:</label>
+        <select id="difficulty">
+          <option value="unbeatable" selected>Unbeatable (Minimax)</option>
+          <option value="casual">Casual (Heuristic)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="status-panel">
+      <div id="turn-indicator" class="turn-indicator x-turn">
+        Turn: <span id="current-player" class="player-x">PLAYER X</span>
+      </div>
+      <div id="game-status" class="game-status">Match in progress...</div>
+    </div>
+
+    <div class="scoreboard">
+      <div class="score-card x-card">
+        <span class="score-label">PLAYER X</span>
+        <span id="score-x" class="score-val">0</span>
+      </div>
+      <div class="score-card tie-card">
+        <span class="score-label">DRAWS</span>
+        <span id="score-ties" class="score-val">0</span>
+      </div>
+      <div class="score-card o-card">
+        <span class="score-label" id="label-player-o">GEMMA AI (O)</span>
+        <span id="score-o" class="score-val">0</span>
+      </div>
+    </div>
+
+    <main class="board-wrapper">
+      <div id="board" class="board" role="grid" aria-label="Tic Tac Toe Board">
+        <button class="cell" data-index="0" aria-label="Row 1, Column 1"></button>
+        <button class="cell" data-index="1" aria-label="Row 1, Column 2"></button>
+        <button class="cell" data-index="2" aria-label="Row 1, Column 3"></button>
+        <button class="cell" data-index="3" aria-label="Row 2, Column 1"></button>
+        <button class="cell" data-index="4" aria-label="Row 2, Column 2"></button>
+        <button class="cell" data-index="5" aria-label="Row 2, Column 3"></button>
+        <button class="cell" data-index="6" aria-label="Row 3, Column 1"></button>
+        <button class="cell" data-index="7" aria-label="Row 3, Column 2"></button>
+        <button class="cell" data-index="8" aria-label="Row 3, Column 3"></button>
+      </div>
+    </main>
+
+    <footer class="footer-actions">
+      <button id="btn-restart" class="action-btn restart-btn">🔄 Restart Match</button>
+      <button id="btn-reset-scores" class="action-btn reset-btn">🗑️ Reset Scores</button>
+      <button id="btn-toggle-sound" class="action-btn sound-btn">🔊 Sound: ON</button>
+    </footer>
+  </div>
+  <script src="game.js"></script>
+  <script src="tictactoe.js"></script>
+</body>
+</html>

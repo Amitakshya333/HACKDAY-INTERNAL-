@@ -795,7 +795,35 @@ export class MaosTui {
     return this.sidebarCollapsed;
   }
 
-  public getRailWidth(terminalW: number = Math.max(20, (process.stdout.columns || 120) - 2)): number {
+  public getTerminalWidth(): number {
+    if (process.stdout && typeof process.stdout.columns === 'number' && process.stdout.columns > 0) {
+      return Math.max(20, process.stdout.columns);
+    }
+    if (process.stderr && typeof process.stderr.columns === 'number' && process.stderr.columns > 0) {
+      return Math.max(20, process.stderr.columns);
+    }
+    if (process.env.COLUMNS) {
+      const parsed = parseInt(process.env.COLUMNS, 10);
+      if (!isNaN(parsed) && parsed > 0) return Math.max(20, parsed);
+    }
+    return 118;
+  }
+
+  public getTerminalRows(): number {
+    if (process.stdout && typeof process.stdout.rows === 'number' && process.stdout.rows > 0) {
+      return Math.max(10, process.stdout.rows);
+    }
+    if (process.stderr && typeof process.stderr.rows === 'number' && process.stderr.rows > 0) {
+      return Math.max(10, process.stderr.rows);
+    }
+    if (process.env.LINES) {
+      const parsed = parseInt(process.env.LINES, 10);
+      if (!isNaN(parsed) && parsed > 0) return Math.max(10, parsed);
+    }
+    return 39;
+  }
+
+  public getRailWidth(terminalW: number = this.getTerminalWidth()): number {
     if (this.sidebarCollapsed) {
       return terminalW >= 40 ? 5 : 0;
     }
@@ -803,17 +831,10 @@ export class MaosTui {
   }
 
   public handleMouseClick(col: number, row: number): boolean {
-    const W = Math.max(20, (process.stdout.columns || 120) - 2);
+    const W = this.getTerminalWidth();
     const railW = this.getRailWidth(W);
-    if (railW <= 0) return false;
-
     const mainW = W - railW - (railW ? 3 : 0);
     const railStartCol = mainW + 1;
-
-    // Must be in the rail separator or content area
-    if (col < railStartCol - 1) {
-      return false;
-    }
 
     const visibleLength = terminalCellWidth;
     const title = '◈  MAOS OASIS v0.4.0  │ Sovereign Multi-Agent Swarm Kernel';
@@ -828,51 +849,180 @@ export class MaosTui {
     const telemetry = `${modelBadge}  │  ${herdrStatus}  │  GPU ${this.gpuStats.tempC}°C  │  VRAM ${vramGb}/${totalGb} GB`;
     const headerGap = W - visibleLength(title) - visibleLength(telemetry);
     const headerLines = headerGap >= 2 ? 1 : 2;
-    const bodyStartRow = headerLines + 2; // Line 1 (+2 if wrapped) + 1 for separator line + 1 for 1-based indexing
+    const bodyStartRow = headerLines + 2;
 
-    const terminalRows = Math.max(10, (process.stdout.rows || 40) - 1);
+    const terminalRows = this.getTerminalRows();
     const hasTranscriptSession = this.activeTab === 1 && this.transcript.length > 0;
     const hasStatus = !hasTranscriptSession && !this.statusMessage.startsWith('Ready.');
     const footerRows = hasStatus ? 4 : 2;
     const bodyRows = Math.max(1, terminalRows - (headerLines + 1) - footerRows);
     const bodyRow = row - bodyStartRow;
 
-    const step = bodyRows >= 16 ? 2 : 1;
-    const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
+    // 1. Sidebar rail click handling (expanded and mini-rail):
+    if (railW > 0 && col >= railStartCol - 1) {
+      const step = bodyRows >= 16 ? 2 : 1;
+      const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
 
-    // Top area of rail (row 0 or above navTop) toggles sidebar
-    if (bodyRow < navTop) {
-      this.toggleSidebar();
+      // Top area of rail (row 0 or above navTop) toggles sidebar
+      if (bodyRow < navTop) {
+        this.toggleSidebar();
+        return true;
+      }
+
+      if (bodyRow >= bodyRows) return false;
+
+      const settingsRow = Math.max(navTop + step * 5 + 1, bodyRows - 2);
+
+      if (bodyRow >= settingsRow - 1) {
+        this.setActiveTab(0);
+        return true;
+      }
+      if (bodyRow >= navTop && bodyRow < navTop + step) {
+        this.setActiveTab(1);
+        return true;
+      }
+      if (bodyRow >= navTop + step && bodyRow < navTop + step * 2) {
+        this.setActiveTab(2);
+        return true;
+      }
+      if (bodyRow >= navTop + step * 2 && bodyRow < navTop + step * 3) {
+        this.setActiveTab(3);
+        return true;
+      }
+      if (bodyRow >= navTop + step * 3 && bodyRow < navTop + step * 4) {
+        this.setActiveTab(4);
+        return true;
+      }
+      if (bodyRow >= navTop + step * 4 && bodyRow < navTop + step * 5) {
+        this.setActiveTab(5);
+        return true;
+      }
+      return false;
+    }
+
+    // 2. Footer hotkey bar click handling (bottom row):
+    if (row >= terminalRows - 1) {
+      if (col >= 1 && col <= 18) {
+        this.setActiveTab(this.getNextTab(this.activeTab));
+        return true;
+      }
+      if (col > 18 && col <= 34) {
+        this.toggleSidebar();
+        return true;
+      }
+      if (col > 34 && col <= 52) {
+        this.previewArtifacts();
+        return true;
+      }
+      if (col > 52 && col <= 76) {
+        this.cycleModel();
+        return true;
+      }
+      if (col >= W - 14) {
+        if (this.isRunning) {
+          this.exit();
+          process.exit(0);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    // 3. Tab-specific interactive click handling:
+    if (this.modalMode !== 'none') {
       return true;
     }
 
-    if (bodyRow >= bodyRows) return false;
+    // Tab 1: Dashboard / Transcript
+    if (this.activeTab === 1) {
+      if (hasTranscriptSession) {
+        // Vertical scrollbar track is at mainW - 2 to mainW
+        if (col >= mainW - 3 && col <= mainW) {
+          if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+            this.scrollUpCurrentView(5);
+          } else {
+            this.scrollDownCurrentView(5);
+          }
+          return true;
+        }
+        // Clicking bottom prompt input row
+        if (row >= bodyStartRow + bodyRows - 3) {
+          this.statusMessage = 'Ready. Type a command or press Enter.';
+          this.render();
+          return true;
+        }
+        // Clicking upper half of transcript scrolls up, lower half scrolls down
+        if (row >= bodyStartRow && row < bodyStartRow + Math.floor(bodyRows / 2)) {
+          this.scrollUpCurrentView(3);
+          return true;
+        } else if (row >= bodyStartRow + Math.floor(bodyRows / 2) && row < bodyStartRow + bodyRows - 3) {
+          this.scrollDownCurrentView(3);
+          return true;
+        }
+      }
+      return false;
+    }
 
-    const settingsRow = Math.max(navTop + step * 5 + 1, bodyRows - 2);
+    // Tab 2: Chat
+    if (this.activeTab === 2) {
+      if (col >= mainW - 3 && col <= mainW) {
+        if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+          this.scrollUpCurrentView(4);
+        } else {
+          this.scrollDownCurrentView(4);
+        }
+        return true;
+      }
+      if (row >= bodyStartRow + bodyRows - 3) {
+        this.statusMessage = 'Chat input focused.';
+        this.render();
+        return true;
+      }
+      if (this.chatMessages.length > 0) {
+        if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+          this.scrollUpCurrentView(3);
+        } else {
+          this.scrollDownCurrentView(3);
+        }
+        return true;
+      }
+      return false;
+    }
 
-    if (bodyRow >= settingsRow - 1) {
-      this.setActiveTab(0);
-      return true;
+    // Tab 3: Swarm
+    if (this.activeTab === 3) {
+      if (col >= 2 && col <= 44 && row >= bodyStartRow + 6 && row <= bodyStartRow + 16) {
+        const clickedAgentIdx = Math.floor((row - (bodyStartRow + 6)) / 2);
+        if (clickedAgentIdx >= 0 && clickedAgentIdx < this.swarmAgents.length) {
+          this.selectedSwarmAgentIndex = clickedAgentIdx;
+          this.statusMessage = `Selected agent: ${this.swarmAgents[clickedAgentIdx].name}`;
+          this.render();
+          return true;
+        }
+      }
+      if (col > 44 && col <= mainW) {
+        if (row <= bodyStartRow + 2) {
+          this.swarmInspectorExpanded = !this.swarmInspectorExpanded;
+          this.render();
+          return true;
+        }
+        if (row < bodyStartRow + Math.floor(bodyRows / 2)) {
+          this.scrollUpCurrentView(3);
+        } else {
+          this.scrollDownCurrentView(3);
+        }
+        return true;
+      }
+      return false;
     }
-    if (bodyRow >= navTop && bodyRow < navTop + step) {
-      this.setActiveTab(1);
-      return true;
-    }
-    if (bodyRow >= navTop + step && bodyRow < navTop + step * 2) {
-      this.setActiveTab(2);
-      return true;
-    }
-    if (bodyRow >= navTop + step * 2 && bodyRow < navTop + step * 3) {
-      this.setActiveTab(3);
-      return true;
-    }
-    if (bodyRow >= navTop + step * 3 && bodyRow < navTop + step * 4) {
-      this.setActiveTab(4);
-      return true;
-    }
-    if (bodyRow >= navTop + step * 4 && bodyRow < navTop + step * 5) {
-      this.setActiveTab(5);
-      return true;
+
+    // Tab 0: Settings
+    if (this.activeTab === 0) {
+      if (row >= bodyStartRow + 4 && row <= bodyStartRow + 14) {
+        this.cycleModel();
+        return true;
+      }
+      return false;
     }
 
     return false;
@@ -884,6 +1034,10 @@ export class MaosTui {
     process.stdout.write(
       '\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1007l\x1b[?1015l\x1b[?1016l',
     );
+    // In live interactive TTY sessions (not test runners), enable SGR mouse click reporting so clicks on « Collapse and tabs work seamlessly
+    if (!process.env.VITEST && Boolean(process.stdout.isTTY)) {
+      process.stdout.write('\x1b[?1000h\x1b[?1006h');
+    }
 
     this.setupKeyboard();
     this.updateGpuTelemetry();
@@ -1360,7 +1514,13 @@ export class MaosTui {
         key.name !== 'escape' &&
         key.name !== 'return' &&
         key.name !== 'backspace' &&
-        key.name !== 'f2'
+        key.name !== 'f2' &&
+        str !== '\x1b[12~' &&
+        str !== '\x1bOQ' &&
+        str !== '\x1b[1;2Q' &&
+        str !== '\x1b[OQ' &&
+        str !== '\x1bO2Q' &&
+        str !== '\x1b[24~'
       ) {
         return;
       }
@@ -1371,8 +1531,12 @@ export class MaosTui {
         str === '\x1bOQ' ||
         str === '\x1b[12~' ||
         str === '\x1b[1;2Q' ||
+        str === '\x1b[OQ' ||
+        str === '\x1bO2Q' ||
+        str === '\x1b[24~' ||
         (key.ctrl && (key.name === '\\' || key.name === 'backslash')) ||
         str === '\x1c' ||
+        (key.ctrl && (key.name === 's' || str === '\x13')) ||
         (key.meta && (key.name === 's' || key.name === 'm')) ||
         str === '\x1bs' ||
         str === '\x1bm'
@@ -1742,31 +1906,12 @@ export class MaosTui {
           return;
         }
 
-        // History navigation with Up/Down
+        // When transcript/Ignite logs are present, Up/Down, PageUp/PageDown, Home/End scroll the view:
         if (
-          key.name === 'up' &&
-          this.commandHistory.length > 0 &&
-          (this.modalInput.getText() === '' ||
-            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
+          ['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) &&
+          this.transcript.length > 0 &&
+          !key.alt
         ) {
-          this.commandHistoryIndex = Math.max(0, this.commandHistoryIndex - 1);
-          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
-          this.render();
-          return;
-        }
-        if (
-          key.name === 'down' &&
-          this.commandHistory.length > 0 &&
-          (this.modalInput.getText() === '' ||
-            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
-        ) {
-          this.commandHistoryIndex = Math.min(this.commandHistory.length, this.commandHistoryIndex + 1);
-          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
-          this.render();
-          return;
-        }
-
-        if (['pageup', 'pagedown', 'home', 'end', 'up', 'down'].includes(key.name) && this.transcript.length > 0) {
           if (key.ctrl && key.name === 'up') {
             this.scrollUpCurrentView(3);
             return;
@@ -1792,6 +1937,30 @@ export class MaosTui {
               ),
             );
           }
+          this.render();
+          return;
+        }
+
+        // History navigation with Up/Down (when transcript is empty or with Alt modifier)
+        if (
+          (key.name === 'up' || (key.alt && key.name === 'up')) &&
+          this.commandHistory.length > 0 &&
+          (this.modalInput.getText() === '' ||
+            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
+        ) {
+          this.commandHistoryIndex = Math.max(0, this.commandHistoryIndex - 1);
+          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
+          this.render();
+          return;
+        }
+        if (
+          (key.name === 'down' || (key.alt && key.name === 'down')) &&
+          this.commandHistory.length > 0 &&
+          (this.modalInput.getText() === '' ||
+            this.modalInput.getText() === (this.commandHistory[this.commandHistoryIndex] || ''))
+        ) {
+          this.commandHistoryIndex = Math.min(this.commandHistory.length, this.commandHistoryIndex + 1);
+          this.modalInput.setText(this.commandHistory[this.commandHistoryIndex] || '', true);
           this.render();
           return;
         }
@@ -1844,6 +2013,10 @@ export class MaosTui {
           const msg = this.chatInput.getText().trim();
           this.chatInput.clearLine();
           if (msg) {
+            if (msg.startsWith('/')) {
+              void this.executeCommandLine(msg);
+              return;
+            }
             void this.sendGemmaChatMessage(msg, false);
           } else {
             this.statusMessage = 'Type a message to chat with Gemma.';
@@ -2281,6 +2454,13 @@ export class MaosTui {
       return;
     }
     if (['clear', 'cls', 'clean', 'reset'].includes(name)) {
+      if (this.activeTab === 2) {
+        this.chatMessages = [];
+        this.chatScrollOffset = 0;
+        this.statusMessage = 'Chat history cleared.';
+        this.render();
+        return;
+      }
       this.activeTab = 1;
       this.transcript = [];
       this.transcriptScrollOffset = 0;
@@ -3291,7 +3471,7 @@ export class MaosTui {
   }
 
   private renderInternal(): void {
-    const W = Math.max(20, (process.stdout.columns || 120) - 2);
+    const W = this.getTerminalWidth();
     const railW = this.getRailWidth(W);
     const mainW = W - railW - (railW ? 3 : 0);
     const lines: string[] = [];
@@ -3317,7 +3497,7 @@ export class MaosTui {
     const hasTranscriptSession = this.activeTab === 1 && this.transcript.length > 0;
     const hasStatus = !hasTranscriptSession && !this.statusMessage.startsWith('Ready.');
     const footerRows = hasStatus ? 4 : 2;
-    const terminalRows = Math.max(10, (process.stdout.rows || 40) - 1);
+    const terminalRows = this.getTerminalRows();
     const availableBodyRows = Math.max(1, terminalRows - lines.length - footerRows);
 
     if (this.activeTab === 3) {
@@ -3371,8 +3551,8 @@ export class MaosTui {
         if (isMini) {
           const centered = centerTerminalLine(icon, railW);
           sidebar[row] = selected
-            ? pad(chalk.bgHex('#33477F').hex('#FFFFFF').bold(centered), railW)
-            : pad(c.slateText(centered), railW);
+            ? pad(chalk.bgHex('#1E3A8A').hex('#67E8F9').bold(centered), railW)
+            : pad(chalk.hex('#94A3B8').bold(centered), railW);
         } else {
           const fullLabel = `${icon}  ${title}`;
           if (rightText) {

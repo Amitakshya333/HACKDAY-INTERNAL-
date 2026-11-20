@@ -234,7 +234,8 @@ const MARKERS: Array<{ kind: ErrorKind; re: RegExp }> = [
   { kind: 'jest', re: /^FAIL\s+\S+/m },
   { kind: 'jest', re: /Test Suites:\s+\d+\s+failed/i },
   { kind: 'jest', re: /Tests:\s+\d+\s+failed/i },
-  { kind: 'jest', re: /●.*›|●\s+\S+/ },
+  { kind: 'jest', re: /^\s*●\s+.*›/m },
+  { kind: 'jest', re: /^\s*●\s+(?!ACTIVE|IDLE|DONE|RUNNING|WAITING|PENDING|HERDR|OLLAMA)\S+/m },
   { kind: 'vitest', re: /Test Files\s+\d+\s+failed/i },
   { kind: 'vitest', re: /FAIL\s+.*\.(test|spec)\.[a-z]+/i },
   { kind: 'vitest', re: /AssertionError|Expected .* (toBe|toEqual|toMatch|toContain)/ },
@@ -247,6 +248,10 @@ const MARKERS: Array<{ kind: ErrorKind; re: RegExp }> = [
 ];
 
 function classifyLine(line: string): ErrorKind | null {
+  // Ignore TUI card frames, worker headers, and status badges (e.g. "Status: ● ACTIVE")
+  if (/[║╔╚╠═]/.test(line) || /Status:\s*●/i.test(line) || /Harness:\s*Herdr/i.test(line)) {
+    return null;
+  }
   for (const { kind, re } of MARKERS) {
     if (re.test(line)) return kind;
   }

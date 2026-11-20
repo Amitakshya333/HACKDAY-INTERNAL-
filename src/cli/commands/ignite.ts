@@ -448,17 +448,174 @@ export interface BuiltArtifactManifest {
   previewCommand?: string;
 }
 
+export interface GoalDisambiguation {
+  rawGoal: string;
+  sanitizedGoal: string;
+  rejectedGoal?: string;
+  isCorrection: boolean;
+}
+
+export interface TaskHistoryEntry {
+  timestamp: string;
+  rawGoal: string;
+  sanitizedGoal: string;
+  rejectedGoal?: string;
+  subtasks: string[];
+  status: 'active' | 'completed' | 'superseded';
+  isCorrection?: boolean;
+}
+
+/**
+ * Loads task history from .maos/task-history.json
+ */
+export function loadTaskHistory(cwd: string): TaskHistoryEntry[] {
+  try {
+    const histFile = path.join(cwd, '.maos', 'task-history.json');
+    if (fs.existsSync(histFile)) {
+      const raw = fs.readFileSync(histFile, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Appends an entry to .maos/task-history.json
+ */
+export function saveTaskHistory(cwd: string, entry: TaskHistoryEntry): void {
+  try {
+    const maosDir = path.join(cwd, '.maos');
+    fs.mkdirSync(maosDir, { recursive: true });
+    const history = loadTaskHistory(cwd);
+    if (entry.isCorrection || entry.rejectedGoal) {
+      for (const h of history) {
+        if (h.status === 'active') h.status = 'superseded';
+      }
+    }
+    history.push(entry);
+    fs.writeFileSync(path.join(maosDir, 'task-history.json'), JSON.stringify(history.slice(-30), null, 2), 'utf-8');
+  } catch {}
+}
+
+/**
+ * Intelligent goal disambiguation and correction parser.
+ * Handles negation patterns like:
+ * "I told you to build a tic-tac-toe game not a Minecraft game"
+ * "build me a tic tac toe game not minecraft"
+ * "you made me a minecraft game so make tic tac toe"
+ */
+export function disambiguateGoal(rawGoal: string, previousGoals: string[] = []): GoalDisambiguation {
+  const trimmed = rawGoal.trim();
+
+  // Pattern 1: "I told you to build X not Y" or "build X not Y" or "make X not Y"
+  const notMatch = trimmed.match(
+    /(?:i told you to build|build(?: me)?|make(?: me)?|create)\s+(.*?)\s+(?:not|instead of)\s+(.*)/i,
+  );
+  if (notMatch) {
+    const target = notMatch[1].replace(/^(an?|the)\s+/i, '').trim();
+    const rejected = notMatch[2]
+      .replace(/^(an?|the)\s+/i, '')
+      .replace(/[.,!?;]+$/, '')
+      .trim();
+    return {
+      rawGoal,
+      sanitizedGoal: `Build ${target}`,
+      rejectedGoal: rejected,
+      isCorrection: true,
+    };
+  }
+
+  // Pattern 2: "you made me a X so make Y" or "you made X not Y"
+  const correctionMatch = trimmed.match(
+    /(?:you made me a|you made|you built)\s+(.*?)\s+(?:so make|now make|not|instead of)\s+(.*)/i,
+  );
+  if (correctionMatch) {
+    const rejected = correctionMatch[1].trim();
+    const target = correctionMatch[2].replace(/^(an?|the)\s+/i, '').trim();
+    return {
+      rawGoal,
+      sanitizedGoal: `Build ${target}`,
+      rejectedGoal: rejected,
+      isCorrection: true,
+    };
+  }
+
+  // Pattern 3: check if rawGoal mentions rejection of any previous goal
+  for (const prev of previousGoals) {
+    if (prev && trimmed.toLowerCase().includes(`not ${prev.toLowerCase()}`)) {
+      return {
+        rawGoal,
+        sanitizedGoal: trimmed.replace(new RegExp(`not\\s+${prev}`, 'gi'), '').trim(),
+        rejectedGoal: prev,
+        isCorrection: true,
+      };
+    }
+  }
+
+  return {
+    rawGoal,
+    sanitizedGoal: trimmed,
+    isCorrection: false,
+  };
+}
+
 /**
  * Scans all worker worktrees and copies generated files directly to ./output and ./dist-preview.
  * Creates an index manifest with line counts and detects runnable entrypoints.
+ * Clears stale build artifacts so previous games/runs (e.g. Minecraft) do NOT contaminate the new build.
  */
 export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): BuiltArtifactManifest {
   const outputDir = path.join(cwd, 'output');
   const distDir = path.join(cwd, 'dist-preview');
-  fs.mkdirSync(outputDir, { recursive: true });
-  fs.mkdirSync(distDir, { recursive: true });
+
+  // Purge stale build artifacts in ./output and ./dist-preview
+  try {
+    if (fs.existsSync(outputDir)) {
+      const existing = fs.readdirSync(outputDir);
+      for (const item of existing) {
+        fs.rmSync(path.join(outputDir, item), { recursive: true, force: true });
+      }
+    } else {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    if (fs.existsSync(distDir)) {
+      const existing = fs.readdirSync(distDir);
+      for (const item of existing) {
+        fs.rmSync(path.join(distDir, item), { recursive: true, force: true });
+      }
+    } else {
+      fs.mkdirSync(distDir, { recursive: true });
+    }
+  } catch {
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.mkdirSync(distDir, { recursive: true });
+  }
 
   const filesMap = new Map<string, BuiltFileSummary>();
+
+  const REPO_IGNORE = new Set([
+    '.git',
+    'node_modules',
+    '.maos',
+    '.maos-oasis',
+    'dist',
+    'dist-preview',
+    'output',
+    '.husky',
+    '.github',
+    '.skills',
+    'desktop',
+    'fixtures',
+    'artifacts',
+    'review-packets',
+    'event-staging-2026-10-31',
+    'industrial',
+    'scripts',
+    'demo',
+    'profiles',
+    'rust',
+    'maos-website',
+  ]);
 
   const scanDir = (dir: string, baseDir: string, workerId: string) => {
     if (!fs.existsSync(dir)) return;
@@ -468,15 +625,8 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
         const fullPath = path.join(dir, entry.name);
         const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
 
-        // Ignore internal directories, logs, and build artifacts
-        if (
-          entry.name === '.git' ||
-          entry.name === 'node_modules' ||
-          entry.name === '.maos' ||
-          entry.name === '.maos-oasis' ||
-          entry.name === 'dist' ||
-          entry.name.endsWith('.log')
-        ) {
+        // Ignore internal repo directories, logs, and build artifacts
+        if (REPO_IGNORE.has(entry.name) || entry.name.endsWith('.log')) {
           continue;
         }
 
@@ -512,8 +662,100 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
   };
 
   for (const w of workers) {
-    if (w.worktreePath && fs.existsSync(w.worktreePath)) {
+    if (!w.worktreePath || !fs.existsSync(w.worktreePath)) continue;
+
+    let workerFiles: string[] = [];
+    const isGit = fs.existsSync(path.join(w.worktreePath, '.git'));
+    if (isGit) {
+      try {
+        const statusOut = execSync('git status --porcelain -uall', {
+          cwd: w.worktreePath,
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        const uncommitted = statusOut
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => line.slice(3).trim());
+
+        let committed: string[] = [];
+        try {
+          const diffOut = execSync('git diff --name-only main...HEAD', {
+            cwd: w.worktreePath,
+            encoding: 'utf-8',
+            timeout: 5000,
+          });
+          committed = diffOut
+            .split('\n')
+            .map((l) => l.trim())
+            .filter(Boolean);
+        } catch {
+          try {
+            const logOut = execSync('git log -n 5 --name-only --pretty=""', {
+              cwd: w.worktreePath,
+              encoding: 'utf-8',
+              timeout: 5000,
+            });
+            committed = logOut
+              .split('\n')
+              .map((l) => l.trim())
+              .filter(Boolean);
+          } catch {}
+        }
+        workerFiles = Array.from(new Set([...uncommitted, ...committed]));
+      } catch {
+        workerFiles = [];
+      }
+    }
+
+    if (workerFiles.length === 0) {
       scanDir(w.worktreePath, w.worktreePath, w.agentId);
+    } else {
+      for (const relPath of workerFiles) {
+        const fullPath = path.join(w.worktreePath, relPath);
+        if (!fs.existsSync(fullPath)) continue;
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) continue;
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          const lines = content.split('\n').length;
+
+          const targetOut = path.join(outputDir, relPath);
+          const targetDist = path.join(distDir, relPath);
+          fs.mkdirSync(path.dirname(targetOut), { recursive: true });
+          fs.mkdirSync(path.dirname(targetDist), { recursive: true });
+          fs.copyFileSync(fullPath, targetOut);
+          fs.copyFileSync(fullPath, targetDist);
+
+          filesMap.set(relPath, {
+            path: relPath,
+            lines,
+            sizeBytes: stat.size,
+            workerId: w.agentId,
+          });
+        } catch {}
+      }
+    }
+  }
+
+  // Promote nested index.html (e.g. tictactoe/index.html) to root output/index.html if missing
+  if (!filesMap.has('index.html')) {
+    const nestedHtml = Array.from(filesMap.values()).find((f) => f.path.endsWith('index.html'));
+    if (nestedHtml) {
+      const srcFile = path.join(outputDir, nestedHtml.path);
+      const rootHtml = path.join(outputDir, 'index.html');
+      const rootDistHtml = path.join(distDir, 'index.html');
+      try {
+        fs.copyFileSync(srcFile, rootHtml);
+        fs.copyFileSync(srcFile, rootDistHtml);
+        filesMap.set('index.html', {
+          path: 'index.html',
+          lines: nestedHtml.lines,
+          sizeBytes: nestedHtml.sizeBytes,
+          workerId: nestedHtml.workerId,
+        });
+      } catch {}
     }
   }
 
@@ -615,7 +857,20 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
     );
   }
 
-  // ── Step 1: Task Decomposition (Gemma) ──────────────────────
+  // ── Step 1: Task Decomposition (Gemma) & Intent Disambiguation ──
+  const history = loadTaskHistory(cwd);
+  const previousGoals = history.map((h) => h.sanitizedGoal || h.rawGoal);
+  const disambiguation = disambiguateGoal(goal, previousGoals);
+  const effectiveGoal = disambiguation.sanitizedGoal;
+
+  if (disambiguation.isCorrection && disambiguation.rejectedGoal) {
+    console.log(
+      chalk.cyan(
+        `  🎯 Goal Intent Clarified: "${chalk.bold.white(effectiveGoal)}" (Superseding rejected target: "${chalk.strikethrough.gray(disambiguation.rejectedGoal)}")`,
+      ),
+    );
+  }
+
   const config = services.project.loadConfig();
   const roster = (config.agents as Array<{ id: string; role: string; capabilities: string[] }>).map((a) => ({
     id: a.id,
@@ -626,13 +881,13 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   let subtasks: SubTask[] = [];
   let modelLabel = 'heuristic-fallback';
   const spinner = ora({
-    text: chalk.cyan('Gemma is decomposing the goal into atomic subtasks...'),
+    text: chalk.cyan(`Gemma is decomposing "${effectiveGoal}" into atomic subtasks...`),
     spinner: 'dots',
   }).start();
   try {
     const { provider, label } = resolveIgniteProvider(options, cwd);
     modelLabel = label;
-    const result = await decompose(provider, goal, roster, cwd);
+    const result = await decompose(provider, effectiveGoal, roster, cwd);
     subtasks = result.tasks.slice(0, maxPanes);
     spinner.succeed(chalk.green(`Decomposed into ${subtasks.length} subtasks (${label})`));
   } catch (err: unknown) {
@@ -644,9 +899,18 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
         'Falling back to heuristic split so the swarm can still launch. Start Ollama/Gemma for full reasoning.',
       ),
     );
-    subtasks = heuristicDecompose(goal, maxPanes);
+    subtasks = heuristicDecompose(effectiveGoal, maxPanes);
     modelLabel = 'heuristic-fallback';
   }
+
+  saveTaskHistory(cwd, {
+    timestamp: new Date().toISOString(),
+    rawGoal: goal,
+    sanitizedGoal: effectiveGoal,
+    rejectedGoal: disambiguation.rejectedGoal,
+    subtasks: subtasks.map((s) => s.title),
+    status: 'active',
+  });
 
   console.log('');
   subtasks.forEach((t, i) => {
@@ -659,7 +923,9 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   if (dryRun) {
     console.log(chalk.cyan('\n🔍 Dry run — no panes spawned, no worktrees created, healer not started.'));
     console.log(chalk.gray(`Would spawn ${subtasks.length} worker pane(s) with model ${modelLabel}.`));
-    console.log(chalk.gray(`Branches: ${subtasks.map((_, i) => buildWorkerBranch(branchPrefix, goal, i)).join(', ')}`));
+    console.log(
+      chalk.gray(`Branches: ${subtasks.map((_, i) => buildWorkerBranch(branchPrefix, effectiveGoal, i)).join(', ')}`),
+    );
     console.log('');
     return;
   }
@@ -674,7 +940,7 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   for (let i = 0; i < subtasks.length; i++) {
     const task = subtasks[i];
     const agentId = buildWorkerAgentId(i);
-    const branch = buildWorkerBranch(branchPrefix, goal, i);
+    const branch = buildWorkerBranch(branchPrefix, effectiveGoal, i);
     const step = ora({
       text: chalk.cyan(`Spawning worker ${i + 1}/${subtasks.length} (${agentId} → ${branch})...`),
     }).start();
@@ -716,12 +982,12 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
         );
         continue;
       }
-      const testCmd = resolveWorktreeTestCommand(wt.worktreePath, goal, task);
+      const testCmd = resolveWorktreeTestCommand(wt.worktreePath, effectiveGoal, task);
       const safeTitle = task.title
         .replace(/[\r\n]+/g, ' ')
         .replace(/["'`$\\]/g, '')
         .trim();
-      const safeGoal = goal
+      const safeGoal = effectiveGoal
         .replace(/[\r\n]+/g, ' ')
         .replace(/["'`$\\]/g, '')
         .trim();

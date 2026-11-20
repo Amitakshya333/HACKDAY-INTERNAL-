@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-11-20T13:00:00.000Z",
+  "outputDir": "output",
+  "distDir": "dist-preview",
+  "files": [
+    {
+      "path": "index.html",
+      "lines": 72,
+      "sizeBytes": 2720,
+      "workerId": "ignite-worker-1"
+    },
+    {
+      "path": "style.css",
+      "lines": 230,
+      "sizeBytes": 4200,
+      "workerId": "ignite-worker-2"
+    },
+    {
+      "path": "game.js",
+      "lines": 290,
+      "sizeBytes": 7800,
+      "workerId": "ignite-worker-3"
+    },
+    {
+      "path": "tictactoe.js",
+      "lines": 5,
+      "sizeBytes": 110,
+      "workerId": "ignite-worker-4"
+    }
+  ],
+  "entrypoint": "output/index.html",
+  "entrypointType": "html",
+  "previewCommand": "start output/index.html"
+}
