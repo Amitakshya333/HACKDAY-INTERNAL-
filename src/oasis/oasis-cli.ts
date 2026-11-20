@@ -40,6 +40,7 @@ import {
 import {
   createSession,
   loadSession,
+  saveSession,
   listSessions,
   getLatestSessionId,
   setCurrentSession,
@@ -130,6 +131,38 @@ async function promptSessionMenu(
 }
 
 /**
+ * Displays interactive session selector for option 2 (Browse).
+ */
+async function promptPickSession(sessions: OasisSessionMetadata[]): Promise<string> {
+  console.log(chalk.bold.cyan('\n  Select a session to resume:\n'));
+  const maxDisplay = Math.min(sessions.length, 10);
+  for (let i = 0; i < maxDisplay; i++) {
+    const s = sessions[i];
+    const ageMs = Date.now() - new Date(s.createdAt).getTime();
+    const ageStr =
+      ageMs < 60000
+        ? 'just now'
+        : ageMs < 3600000
+          ? `${Math.round(ageMs / 60000)}m ago`
+          : `${Math.round(ageMs / 3600000)}h ago`;
+    console.log(
+      `  ${chalk.bold.white(`${i + 1}.`)} ${chalk.green(s.sessionId)} — "${s.title}" (${chalk.gray(ageStr)})`,
+    );
+  }
+  console.log('');
+
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(chalk.yellow(`  Select [1-${maxDisplay}] (default: 1): `), (answer) => {
+      rl.close();
+      const num = parseInt((answer || '1').trim(), 10);
+      const chosen = !isNaN(num) && num >= 1 && num <= sessions.length ? sessions[num - 1] : sessions[0];
+      resolve(chosen.sessionId);
+    });
+  });
+}
+
+/**
  * Main Commander Entrypoint
  */
 export async function main(argv: string[] = process.argv): Promise<void> {
@@ -149,6 +182,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         chalk.gray(' — Autonomous Sovereign Workplace CLI\n') +
         chalk.gray('Gemma-First · 100% Local Loopback · Zero Cloud Transmission'),
     )
+    .argument('[prompt]', 'Initial prompt or task goal')
     .option('-c, --continue [prompt]', 'Continue the latest session with injected context')
     .option('-y, --yes', 'Automatically confirm prompts with recommended defaults');
 
@@ -195,9 +229,19 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   program
     .command('run')
     .description('Execute doctor verification gate and launch interactive REPL')
-    .action(async () => {
+    .option('-y, --yes', 'Automatically confirm prompts')
+    .action(async (opts: { yes?: boolean }) => {
       try {
-        await executeRunFlow(process.cwd());
+        const cwd = process.cwd();
+        const projectRoot = findProjectRoot(cwd);
+        const isTTY = Boolean(process.stdin.isTTY);
+        const isTrusted = await checkOrPromptFolderTrust(projectRoot, { yes: opts.yes, nonInteractive: !isTTY });
+        if (!isTrusted) {
+          console.log(chalk.yellow('\nExecution aborted: project folder is not trusted.\n'));
+          process.exit(0);
+        }
+        ensureProjectRuntimeDirs(projectRoot);
+        await executeRunFlow(cwd);
       } catch (err: any) {
         console.error(chalk.red(`\n❌ Run error: ${err.message}`));
         process.exit(1);
@@ -277,9 +321,17 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   program
     .command('resume [sessionId]')
     .description('Resume a previous session in the Oasis workplace')
-    .action(async (sessionId?: string) => {
+    .option('-y, --yes', 'Automatically confirm prompts')
+    .action(async (sessionId?: string, opts?: { yes?: boolean }) => {
       const cwd = process.cwd();
       const projectRoot = findProjectRoot(cwd);
+      const isTTY = Boolean(process.stdin.isTTY);
+      const isTrusted = await checkOrPromptFolderTrust(projectRoot, { yes: opts?.yes, nonInteractive: !isTTY });
+      if (!isTrusted) {
+        console.log(chalk.yellow('\nExecution aborted: project folder is not trusted.\n'));
+        process.exit(0);
+      }
+      ensureProjectRuntimeDirs(projectRoot);
       const targetId = sessionId || getLatestSessionId(projectRoot);
 
       if (!targetId) {
@@ -354,11 +406,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
 
   // ── Bare Command Action (maos-oasis with no subcommands) ──
-  program.action(async (opts: { continue?: boolean | string; yes?: boolean }) => {
+  program.action(async (promptArg: string | undefined, opts: { continue?: boolean | string; yes?: boolean }) => {
     const cwd = process.cwd();
-    const config = loadOasisConfig(cwd);
+    const legacyConfig = loadOasisConfig(cwd);
+    const machineConfig = loadMachineConfig();
+    const effectiveConfig = resolveEffectiveConfig(cwd) || legacyConfig || machineConfig;
 
-    if (!config) {
+    if (!legacyConfig && !machineConfig) {
       console.log(chalk.cyan('ℹ No ./maos-oasis.config.json detected. Starting initialization wizard...\n'));
       try {
         await runOasisInit({ cwd });
@@ -373,22 +427,55 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
     // Configuration present: check trust and sessions
     const projectRoot = findProjectRoot(cwd);
-    ensureProjectRuntimeDirs(projectRoot);
-
     const isTTY = Boolean(process.stdin.isTTY);
 
-    if (opts.continue) {
+    // Per-User Folder Trust Security Gate (Architecture v4 §2)
+    const isTrusted = await checkOrPromptFolderTrust(projectRoot, { yes: opts.yes, nonInteractive: !isTTY });
+    if (!isTrusted) {
+      console.log(chalk.yellow('\nExecution aborted: project folder is not trusted.\n'));
+      process.exit(0);
+    }
+
+    ensureProjectRuntimeDirs(projectRoot);
+
+    const promptText = typeof opts.continue === 'string' ? opts.continue : promptArg;
+    const isContinue = Boolean(opts.continue);
+
+    if (isContinue) {
       const targetId = getLatestSessionId(projectRoot);
       if (targetId) {
         const session = loadSession(projectRoot, targetId);
         if (session) {
           console.log(chalk.cyan(`\nContinuing latest session: ${chalk.bold(targetId)} ("${session.title}")`));
-          await executeRunFlow(cwd, { continueSession: true, targetSessionId: targetId });
+          if (promptText) {
+            session.stats.totalPrompts = (session.stats.totalPrompts || 0) + 1;
+            session.tasks.push({
+              id: `task-${session.tasks.length + 1}`,
+              goal: promptText,
+              workers: [],
+              outputDir: '',
+              previewEntry: '',
+              status: 'active',
+              filesWritten: [],
+              issues: [],
+            });
+            saveSession(projectRoot, session);
+          }
+          await executeRunFlow(cwd, { continueSession: true, targetSessionId: targetId, prompt: promptText });
           return;
         }
       }
       console.log(chalk.yellow('\n⚠️ No previous session found to continue. Starting fresh session.\n'));
-      await executeRunFlow(cwd);
+      const newSess = createSession(projectRoot, { goal: promptText, title: promptText });
+      await executeRunFlow(cwd, { prompt: promptText, targetSessionId: newSess.sessionId });
+      return;
+    }
+
+    // Fresh prompt provided: maos-oasis "prompt" (Architecture v4 §6)
+    if (promptText) {
+      const newSess = createSession(projectRoot, { goal: promptText, title: promptText });
+      console.log(chalk.cyan(`\nStarting fresh session: ${chalk.bold(newSess.sessionId)} ("${newSess.title}")`));
+      await executeRunFlow(cwd, { prompt: promptText, targetSessionId: newSess.sessionId });
       return;
     }
 
@@ -402,9 +489,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           setCurrentSession(projectRoot, latestId);
           await executeRunFlow(cwd, { continueSession: true, targetSessionId: latestId });
           return;
+        } else if (choice === 'browse') {
+          const pickedId = await promptPickSession(priorSessions);
+          setCurrentSession(projectRoot, pickedId);
+          await executeRunFlow(cwd, { continueSession: true, targetSessionId: pickedId });
+          return;
         } else if (choice === 'new') {
-          createSession(projectRoot);
-          await executeRunFlow(cwd);
+          const newSess = createSession(projectRoot);
+          await executeRunFlow(cwd, { targetSessionId: newSess.sessionId });
           return;
         }
       }

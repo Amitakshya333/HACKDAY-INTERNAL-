@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as child_process from 'child_process';
+import { hardenOasisGitignore, ensureOasisRuntimeDirs } from './config';
 
 export type SessionStatus = 'active' | 'completed' | 'failed' | 'abandoned';
 
@@ -80,6 +81,9 @@ export function getSessionsDir(projectRoot: string): string {
  */
 export function ensureProjectRuntimeDirs(projectRoot: string): void {
   const root = path.resolve(projectRoot);
+  try {
+    ensureOasisRuntimeDirs(root);
+  } catch {}
   const dirs = [
     getSessionsDir(root),
     path.join(root, '.maos-oasis', 'worktrees'),
@@ -92,6 +96,9 @@ export function ensureProjectRuntimeDirs(projectRoot: string): void {
       } catch {}
     }
   }
+  try {
+    hardenOasisGitignore(root);
+  } catch {}
 }
 
 /**
@@ -412,23 +419,45 @@ export function acquireSessionLock(projectRoot: string, sessionId: string): { ac
   }
 
   const lockPath = path.join(sessionDir, '.lock');
-  if (fs.existsSync(lockPath)) {
-    try {
-      const pidStr = fs.readFileSync(lockPath, 'utf-8').trim();
-      const pid = parseInt(pidStr, 10);
-      if (pid && !isNaN(pid)) {
-        try {
-          // Check if process is alive
-          process.kill(pid, 0);
-          return { acquired: false, release: () => {} };
-        } catch {
-          // Stale lock from dead process — safe to claim
-        }
-      }
-    } catch {}
-  }
 
-  fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
+  const tryClaim = (): boolean => {
+    try {
+      // Atomic exclusive creation: fails with EEXIST if file already exists
+      fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx', encoding: 'utf-8' });
+      return true;
+    } catch (err: any) {
+      if (err?.code !== 'EEXIST') {
+        return false;
+      }
+      // Lock file already exists — check if holding process is alive
+      try {
+        const pidStr = fs.readFileSync(lockPath, 'utf-8').trim();
+        const pid = parseInt(pidStr, 10);
+        if (pid && !isNaN(pid)) {
+          try {
+            process.kill(pid, 0); // throws if process is dead
+            return false; // holding process is still alive
+          } catch {
+            // Process is dead: stale lock, safe to remove and retry
+            try {
+              fs.unlinkSync(lockPath);
+              fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx', encoding: 'utf-8' });
+              return true;
+            } catch {
+              return false;
+            }
+          }
+        }
+      } catch {
+        return false;
+      }
+      return false;
+    }
+  };
+
+  if (!tryClaim()) {
+    return { acquired: false, release: () => {} };
+  }
 
   let released = false;
   const release = () => {
@@ -436,7 +465,10 @@ export function acquireSessionLock(projectRoot: string, sessionId: string): { ac
     released = true;
     try {
       if (fs.existsSync(lockPath)) {
-        fs.unlinkSync(lockPath);
+        const content = fs.readFileSync(lockPath, 'utf-8').trim();
+        if (content === String(process.pid)) {
+          fs.unlinkSync(lockPath);
+        }
       }
     } catch {}
   };

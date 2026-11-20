@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
 // ── Hoisted Mock Declarations ─────────────────────────────────
 const mocks = vi.hoisted(() => ({
@@ -10,10 +12,14 @@ const mocks = vi.hoisted(() => ({
   runRepl: vi.fn(),
 }));
 
-vi.mock('../../src/oasis/config', () => ({
-  loadOasisConfig: mocks.loadOasisConfig,
-  getOasisConfigPath: mocks.getOasisConfigPath,
-}));
+vi.mock('../../src/oasis/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/oasis/config')>();
+  return {
+    ...actual,
+    loadOasisConfig: mocks.loadOasisConfig,
+    getOasisConfigPath: mocks.getOasisConfigPath,
+  };
+});
 
 vi.mock('../../src/oasis/init', () => ({
   runOasisInit: mocks.runOasisInit,
@@ -30,8 +36,11 @@ vi.mock('../../src/cli/repl', () => ({
 // Import CLI entrypoint after hoisted mocks are installed
 import { main, executeRunFlow } from '../../src/oasis/oasis-cli';
 import { MaosOasisConfig, DoctorReport } from '../../src/oasis/types';
+import { trustProject } from '../../src/oasis/trust';
 
 describe('MAOS Oasis CLI Entrypoint (tests/oasis/cli.test.ts)', () => {
+  let tmpHome: string;
+  const originalEnv = { ...process.env };
   let exitCalls: (string | number | null | undefined)[] = [];
   let stdoutBuffer: string[] = [];
   let stderrBuffer: string[] = [];
@@ -91,6 +100,10 @@ describe('MAOS Oasis CLI Entrypoint (tests/oasis/cli.test.ts)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'oasis-cli-home-'));
+    process.env.MAOS_HOME = tmpHome;
+    trustProject(process.cwd());
+
     exitCalls = [];
     stdoutBuffer = [];
     stderrBuffer = [];
@@ -128,6 +141,10 @@ describe('MAOS Oasis CLI Entrypoint (tests/oasis/cli.test.ts)', () => {
   });
 
   afterEach(() => {
+    process.env = { ...originalEnv };
+    try {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    } catch {}
     exitSpy.mockRestore();
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();

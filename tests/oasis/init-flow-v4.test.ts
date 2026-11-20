@@ -56,6 +56,11 @@ import {
 
 import { MaosOasisConfig } from '../../src/oasis/types';
 import { createDefaultOasisConfig, saveOasisConfig } from '../../src/oasis/config';
+import { main } from '../../src/oasis/oasis-cli';
+
+vi.mock('../../src/cli/repl', () => ({
+  runRepl: vi.fn(),
+}));
 
 describe('⚡ MAOS Oasis Architecture v4 Initialization & Lifecycle Suite', () => {
   let tmpHome: string;
@@ -310,6 +315,128 @@ describe('⚡ MAOS Oasis Architecture v4 Initialization & Lifecycle Suite', () =
 
       expect(packet.length).toBeLessThan(1500);
       expect(packet).toContain('[truncated]');
+    });
+  });
+
+  // ── 5. Architecture v4 Security Gate, Gitignore & Concurrency ────────────
+  describe('5. Architecture v4 Security Gate, Gitignore & Concurrency', () => {
+    it('ensureProjectRuntimeDirs automatically appends .maos-oasis/ to .gitignore', () => {
+      const gitignorePath = path.join(tmpProject, '.gitignore');
+      fs.writeFileSync(gitignorePath, 'node_modules/\ndist/\n', 'utf-8');
+
+      ensureProjectRuntimeDirs(tmpProject);
+
+      const updated = fs.readFileSync(gitignorePath, 'utf-8');
+      expect(updated).toContain('.maos-oasis/');
+    });
+
+    it('atomic lock creation using wx flag prevents second process from overwriting lock', () => {
+      const session = createSession(tmpProject, { goal: 'Atomic lock test' });
+      const lock1 = acquireSessionLock(tmpProject, session.sessionId);
+      expect(lock1.acquired).toBe(true);
+
+      // Verify lock file exists and contains process.pid
+      const lockPath = path.join(tmpProject, '.maos-oasis', 'sessions', session.sessionId, '.lock');
+      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(fs.readFileSync(lockPath, 'utf-8').trim()).toBe(String(process.pid));
+
+      // Attempt second acquisition while process is still alive
+      const lock2 = acquireSessionLock(tmpProject, session.sessionId);
+      expect(lock2.acquired).toBe(false);
+
+      // Clean release
+      lock1.release();
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+
+    it('resolves legacy config from project root even when cwd is a deep subfolder', () => {
+      // Put legacy maos-oasis.config.json at tmpProject root
+      const legacyCfg = createDefaultOasisConfig({ cwd: tmpProject });
+      legacyCfg.model.tag = 'gemma2:9b';
+      saveOasisConfig(legacyCfg, tmpProject);
+
+      // Deep subfolder inside project
+      const deepSub = path.join(tmpProject, 'src', 'components', 'button');
+      fs.mkdirSync(deepSub, { recursive: true });
+
+      const resolved = resolveEffectiveConfig(deepSub);
+      expect(resolved).not.toBeNull();
+      expect(resolved?.model.tag).toBe('gemma2:9b');
+      expect(resolved?.oasisRoot.toLowerCase()).toBe(tmpProject.toLowerCase());
+    });
+
+    it('aborts cleanly with exit 0 when executing in an untrusted project folder in non-interactive mode', async () => {
+      // tmpProject is NOT trusted yet
+      const machineCfg = createDefaultOasisConfig({ cwd: tmpProject });
+      saveMachineConfig(machineCfg);
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: any) => {
+        throw new Error(`process.exit: ${code}`);
+      });
+      const originalCwd = process.cwd();
+      process.chdir(tmpProject);
+
+      try {
+        await expect(main(['node', 'maos-oasis'])).rejects.toThrow('process.exit: 0');
+        expect(exitSpy).toHaveBeenCalledWith(0);
+      } finally {
+        process.chdir(originalCwd);
+        exitSpy.mockRestore();
+      }
+    });
+
+    it('creates a fresh session when invoked with positional prompt', async () => {
+      // Trust the project first
+      trustProject(tmpProject);
+      const machineCfg = createDefaultOasisConfig({ cwd: tmpProject });
+      saveMachineConfig(machineCfg);
+
+      const originalCwd = process.cwd();
+      process.chdir(tmpProject);
+
+      const { runRepl } = await import('../../src/cli/repl');
+      vi.mocked(runRepl).mockClear();
+
+      try {
+        await main(['node', 'maos-oasis', 'build me a cyberpunk tic-tac-toe game', '-y']);
+
+        const sessions = listSessions(tmpProject);
+        expect(sessions.length).toBeGreaterThan(0);
+        const latest = sessions[0];
+        expect(latest.tasks[0].goal).toBe('build me a cyberpunk tic-tac-toe game');
+        expect(runRepl).toHaveBeenCalledWith(tmpProject);
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+
+    it('continues latest session and appends task when invoked with -c option', async () => {
+      trustProject(tmpProject);
+      const machineCfg = createDefaultOasisConfig({ cwd: tmpProject });
+      saveMachineConfig(machineCfg);
+
+      // Create initial session
+      const sess = createSession(tmpProject, { goal: 'Initial Tic Tac Toe build' });
+      sess.tasks[0].status = 'completed';
+      saveSession(tmpProject, sess);
+
+      const originalCwd = process.cwd();
+      process.chdir(tmpProject);
+
+      const { runRepl } = await import('../../src/cli/repl');
+      vi.mocked(runRepl).mockClear();
+
+      try {
+        await main(['node', 'maos-oasis', '-c', 'make it glowing neon', '-y']);
+
+        const reloaded = loadSession(tmpProject, sess.sessionId);
+        expect(reloaded).not.toBeNull();
+        expect(reloaded?.tasks.length).toBe(2);
+        expect(reloaded?.tasks[1].goal).toBe('make it glowing neon');
+        expect(runRepl).toHaveBeenCalledWith(tmpProject);
+      } finally {
+        process.chdir(originalCwd);
+      }
     });
   });
 });

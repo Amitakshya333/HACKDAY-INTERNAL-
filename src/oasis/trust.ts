@@ -27,7 +27,12 @@ export interface TrustedRegistry {
  * Normalizes a directory path for reliable cross-platform comparison.
  */
 export function normalizeDirPath(dirPath: string): string {
-  const resolved = path.resolve(dirPath);
+  let resolved = path.resolve(dirPath);
+  try {
+    if (fs.existsSync(resolved)) {
+      resolved = fs.realpathSync.native ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
+    }
+  } catch {}
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
@@ -53,12 +58,13 @@ export function getMachineDir(): string {
 export function findProjectRoot(startDir: string = process.cwd()): string {
   let current = path.resolve(startDir);
   const root = path.parse(current).root;
-  const realHome = path.resolve(os.homedir());
-  const envHome = process.env.MAOS_HOME ? path.resolve(process.env.MAOS_HOME) : null;
+  const realHome = normalizeDirPath(os.homedir());
+  const envHome = process.env.MAOS_HOME ? normalizeDirPath(process.env.MAOS_HOME) : null;
 
   while (current) {
+    const normCurrent = normalizeDirPath(current);
     // Never treat user home directory as project root (e.g. dotfiles git or machine .maos-oasis)
-    if (current !== realHome && current !== envHome) {
+    if (normCurrent !== realHome && (!envHome || normCurrent !== envHome)) {
       const hasOasis = fs.existsSync(path.join(current, '.maos-oasis'));
       const hasGit = fs.existsSync(path.join(current, '.git'));
       if (hasOasis || hasGit) {

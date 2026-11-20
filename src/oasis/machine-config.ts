@@ -138,12 +138,16 @@ export function resolveEffectiveConfig(cwd: string = process.cwd()): MaosOasisCo
   const projectRoot = findProjectRoot(cwd);
 
   // 1. Check local legacy maos-oasis.config.json if it exists in cwd or project root
+  let legacyConfig: MaosOasisConfig | null = null;
   const localLegacy = path.resolve(cwd, 'maos-oasis.config.json');
-  if (fs.existsSync(localLegacy)) {
+  const projectLegacy = path.resolve(projectRoot, 'maos-oasis.config.json');
+  const legacyPath = fs.existsSync(localLegacy) ? localLegacy : fs.existsSync(projectLegacy) ? projectLegacy : null;
+
+  if (legacyPath) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(localLegacy, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
       if (validateOasisConfig(parsed).valid) {
-        return parsed as MaosOasisConfig;
+        legacyConfig = parsed as MaosOasisConfig;
       }
     } catch {}
   }
@@ -151,11 +155,11 @@ export function resolveEffectiveConfig(cwd: string = process.cwd()): MaosOasisCo
   const machineConfig = loadMachineConfig();
   const projectConfig = loadProjectConfig(projectRoot);
 
-  if (!machineConfig && !projectConfig) {
+  if (!machineConfig && !projectConfig && !legacyConfig) {
     return null;
   }
 
-  const base = machineConfig || createDefaultOasisConfig({ cwd: projectRoot });
+  const base = machineConfig || legacyConfig || createDefaultOasisConfig({ cwd: projectRoot });
 
   if (!projectConfig) {
     return { ...base, oasisRoot: projectRoot };

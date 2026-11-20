@@ -36,6 +36,7 @@ import {
   isLoopbackHost,
   OASIS_CURRENT_VERSION,
 } from './config';
+import { resolveEffectiveConfig } from './machine-config';
 import { renderPanel, getBrandBadge } from '../utils/ui';
 
 export const DEFAULT_LOOPBACK_HOST = '127.0.0.1';
@@ -174,7 +175,26 @@ export function checkConfigAndRuntime(cwd: string, fix: boolean): DoctorCheckRes
     getOasisStatusDir(cwd),
   ];
 
-  if (!fs.existsSync(configPath)) {
+  let parsedConfig: MaosOasisConfig | null = null;
+  if (fs.existsSync(configPath)) {
+    try {
+      parsedConfig = loadOasisConfig(cwd);
+    } catch (err: any) {
+      return {
+        id: 'oasis_config',
+        name: 'Config & Runtime State',
+        status: 'fail',
+        required: true,
+        message: `Invalid configuration: ${err.message}`,
+        fixHint: 'Check syntax in maos-oasis.config.json or run "maos-oasis init -f" to regenerate.',
+        durationMs: Date.now() - startTime,
+      };
+    }
+  } else {
+    parsedConfig = resolveEffectiveConfig(cwd);
+  }
+
+  if (!parsedConfig) {
     return {
       id: 'oasis_config',
       name: 'Config & Runtime State',
@@ -182,21 +202,6 @@ export function checkConfigAndRuntime(cwd: string, fix: boolean): DoctorCheckRes
       required: true,
       message: `Configuration missing at ${path.relative(cwd, configPath) || configPath}`,
       fixHint: 'Run "maos-oasis init" to generate your project configuration.',
-      durationMs: Date.now() - startTime,
-    };
-  }
-
-  let parsedConfig: MaosOasisConfig;
-  try {
-    parsedConfig = loadOasisConfig(cwd)!;
-  } catch (err: any) {
-    return {
-      id: 'oasis_config',
-      name: 'Config & Runtime State',
-      status: 'fail',
-      required: true,
-      message: `Invalid configuration: ${err.message}`,
-      fixHint: 'Check syntax in maos-oasis.config.json or run "maos-oasis init -f" to regenerate.',
       durationMs: Date.now() - startTime,
     };
   }
@@ -693,7 +698,7 @@ export async function runOasisDoctor(options: DoctorOptions = {}): Promise<Docto
   checks.push(checkConfigAndRuntime(cwd, fix));
 
   // Load config for remaining checks
-  const config = loadOasisConfig(cwd);
+  const config = loadOasisConfig(cwd) || resolveEffectiveConfig(cwd);
 
   // Check 3: Loopback OpSec
   checks.push(checkLoopbackOpSec(config));

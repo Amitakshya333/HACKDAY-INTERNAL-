@@ -60,6 +60,7 @@ describe('Oasis Doctor Diagnostic Suite (tests/oasis/doctor.test.ts)', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oasis-doctor-unit-'));
+    process.env.MAOS_HOME = tmpDir;
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;

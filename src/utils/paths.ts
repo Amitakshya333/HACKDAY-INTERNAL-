@@ -189,5 +189,9 @@ export function hardenGitignore(cwd?: string): void {
  */
 export function isMaosInitialized(cwd?: string): boolean {
   const root = cwd || process.cwd();
-  return fs.existsSync(getConfigPath(root)) || fs.existsSync(path.join(root, 'maos-oasis.config.json'));
+  return (
+    fs.existsSync(getConfigPath(root)) ||
+    fs.existsSync(path.join(root, 'maos-oasis.config.json')) ||
+    fs.existsSync(path.join(root, '.maos-oasis'))
+  );
 }

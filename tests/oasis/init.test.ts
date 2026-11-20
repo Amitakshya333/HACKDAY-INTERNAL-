@@ -59,6 +59,7 @@ describe('Oasis Init Flow & Onboarding Suite (tests/oasis/init.test.ts)', () => 
   beforeEach(() => {
     vi.clearAllMocks();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oasis-init-unit-'));
+    process.env.MAOS_HOME = tmpDir;
   });
 
   afterEach(() => {
