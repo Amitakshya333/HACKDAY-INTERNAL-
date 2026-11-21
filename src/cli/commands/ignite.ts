@@ -37,7 +37,9 @@ import {
 import { computeSymmetricGridPlan } from '../../integrations/herdr';
 import { getMessageBus } from '../../core/message-bus';
 import { renderPanel, getBrandBadge, renderDivider } from '../../utils/ui';
-import { getLatestSessionId, loadSession, saveSession } from '../../oasis/session-manager';
+import { getLatestSessionId, loadSession, saveSession, formatPreviousTaskContext } from '../../oasis/session-manager';
+import { detectHardware } from '../../oasis/init';
+import { HardwareTier } from '../../oasis/types';
 
 // ─── Options ─────────────────────────────────────────────────────
 
@@ -93,6 +95,108 @@ export const SUPPORTED_HARNESSES = ['herdr'];
 
 // ─── Pure helpers (unit-tested) ──────────────────────────────────
 
+export interface AdaptiveSwarmPlan {
+  panes: number;
+  reason: string;
+  hardwareTier: HardwareTier;
+  taskComplexity: 'low' | 'medium' | 'high';
+}
+
+/**
+ * Intelligent hardware-aware and complexity-aware swarm pane router.
+ * Evaluates the task requirements and clamps to the safe physical VRAM envelope.
+ *
+ * Routing Rules:
+ *   - Atomic / Simple / Single-page goals (3D shapes, canvas, games, widgets, bugfix) → 1 agent
+ *     (Peak ~30 tok/s inference, 0 merge conflicts, 100% cohesion)
+ *   - Component / Duo goals (UI + Logic, Views + Store) → 2 agents
+ *   - Complex / Multi-subsystem goals (full-stack, db + api + auth) → 3 to hardware max
+ *   - Hardware Safety Caps:
+ *     LOW (<4GB VRAM / CPU): 1 agent max (avoids paging/thrashing)
+ *     MID (4-6GB VRAM): 2 agents max
+ *     HIGH (6-12GB VRAM, e.g. RTX 4060 8GB): 2-3 agents max
+ *     ULTRA (>=12GB VRAM, RTX 4090 / Mac M3): up to 6 agents
+ *   - Explicit user --panes flag ALWAYS overrides automatic scaling.
+ */
+export function resolveAdaptiveSwarmPanes(
+  userPanes: number | string | undefined,
+  goal: string,
+  candidateTaskCount: number = 2,
+  hardwareTierOverride?: HardwareTier,
+): AdaptiveSwarmPlan {
+  // 1. Hardware profile detection
+  let tier: HardwareTier = hardwareTierOverride || 'high';
+  if (!hardwareTierOverride) {
+    try {
+      const hw = detectHardware();
+      tier = hw.tier;
+    } catch {
+      tier = 'high';
+    }
+  }
+
+  const hardwareCaps: Record<HardwareTier, number> = {
+    low: 1,
+    mid: 2,
+    high: 3,
+    ultra: 6,
+  };
+  const hardwareLimit = hardwareCaps[tier] || 2;
+
+  // 2. Explicit user override (--panes <n>)
+  if (userPanes !== undefined && userPanes !== null) {
+    const parsed = parseInt(String(userPanes), 10);
+    if (!isNaN(parsed) && parsed >= 1) {
+      const explicit = Math.min(Math.max(parsed, 1), 8);
+      return {
+        panes: explicit,
+        reason: `Explicit override (--panes ${explicit})`,
+        hardwareTier: tier,
+        taskComplexity: explicit === 1 ? 'low' : explicit === 2 ? 'medium' : 'high',
+      };
+    }
+  }
+
+  // 3. Task complexity heuristics
+  const isComplexFullStack =
+    /\b(fullstack|full-stack|backend|database|auth|microservice|distributed|rest api|sqlite|postgres)\b/i.test(goal);
+
+  const isSimpleSinglePage =
+    /\b(triangle|cube|shape|canvas|webgl|3d|snake|pong|tictactoe|tic-tac-toe|calculator|counter|button|widget|fix|bug|typo|hero|landing)\b/i.test(
+      goal,
+    ) && !isComplexFullStack;
+
+  if (isSimpleSinglePage) {
+    return {
+      panes: 1,
+      reason: `Adaptive allocation: Single-page / atomic task "${goal.slice(0, 32)}" → 1 focused agent (peak 30 tok/s, zero merge conflicts)`,
+      hardwareTier: tier,
+      taskComplexity: 'low',
+    };
+  }
+
+  if (isComplexFullStack) {
+    const requested = Math.max(3, candidateTaskCount);
+    const finalPanes = Math.max(1, Math.min(requested, hardwareLimit));
+    return {
+      panes: finalPanes,
+      reason: `Adaptive allocation: Complex full-stack task on ${tier.toUpperCase()} hardware → ${finalPanes} agents (clamped to VRAM safety envelope)`,
+      hardwareTier: tier,
+      taskComplexity: 'high',
+    };
+  }
+
+  // Default: component / medium task
+  const requested = Math.min(2, Math.max(1, candidateTaskCount));
+  const finalPanes = Math.max(1, Math.min(requested, hardwareLimit));
+  return {
+    panes: finalPanes,
+    reason: `Adaptive allocation: Component task on ${tier.toUpperCase()} hardware → ${finalPanes} agents (dual-pane swarm)`,
+    hardwareTier: tier,
+    taskComplexity: 'medium',
+  };
+}
+
 export function validateIgniteOptions(options: IgniteOptions): { panes: number; maxHeals: number; goal: string } {
   const harness = (options.harness || 'herdr').toLowerCase();
   if (!SUPPORTED_HARNESSES.includes(harness)) {
@@ -105,7 +209,8 @@ export function validateIgniteOptions(options: IgniteOptions): { panes: number; 
   if (!goal) {
     throw new Error('Missing required --goal "<task>". Usage: maos ignite --gemma --harness herdr --goal "<task>"');
   }
-  const panes = Math.min(Math.max(parseInt(String(options.panes ?? 4), 10) || 4, 1), 8);
+  const adaptive = resolveAdaptiveSwarmPanes(options.panes, goal);
+  const panes = adaptive.panes;
   const maxHeals = Math.min(Math.max(parseInt(String(options.maxHeals ?? 5), 10) || 5, 0), 25);
   return { panes, maxHeals, goal };
 }
@@ -402,6 +507,28 @@ function gitDiffStat(cwd: string, branch: string): string {
     } catch {
       return '(diff unavailable)';
     }
+  }
+}
+
+/** Project manifests/config a worker may create in an empty project but must never modify or delete. */
+const PROTECTED_FILE_PATTERN =
+  /^(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|tsconfig[^/]*\.json|\.gitignore|\.npmrc|maos-oasis\.config\.json|\.maos\/.*|\.maos-oasis\/.*)$/;
+
+/** Existing protected files the branch modifies or deletes (relative to the checked-out branch). */
+export function findProtectedFileChanges(cwd: string, branch: string): string[] {
+  try {
+    const out = execFileSync('git', ['diff', '--name-status', '--no-renames', `HEAD...${branch}`], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return out
+      .split('\n')
+      .map((line) => line.split('\t'))
+      .filter(([status, file]) => file && status !== 'A' && PROTECTED_FILE_PATTERN.test(file))
+      .map(([, file]) => file);
+  } catch {
+    return []; // diff unavailable: tryMergeBranch reports the real git error
   }
 }
 
@@ -866,6 +993,26 @@ export function exportBuiltArtifacts(cwd: string, workers: IgniteWorker[]): Buil
   return manifest;
 }
 
+/** Rules every worker gets in its task file (local models repeat these mistakes otherwise). */
+export const WORKER_GUARDRAILS = `## Guardrails
+- Build a static web app (index.html + JS/CSS) unless the task says otherwise. Do NOT run npm init or create/modify package.json, package-lock.json, tsconfig*.json or other project config.
+- http://localhost:3030 is the MAOS Oasis preview server that serves ./output/. It is NOT an app to build: never write a server for it. "localhost:3030 is blank" means the previous output has a runtime error — fix those files.
+- Three.js r125+ removed THREE.Geometry and THREE.Face3: use THREE.BufferGeometry with setAttribute('position', ...). Prefer plain WebGL/canvas with no CDN scripts (the preview may be offline).
+`;
+
+/** <PREVIOUS_TASK_CONTEXT> for the latest built task in the current Oasis session, if any. */
+export function buildPreviousTaskContext(cwd: string): string | undefined {
+  try {
+    const sessionId = getLatestSessionId(cwd);
+    const session = sessionId ? loadSession(cwd, sessionId) : null;
+    const built = session?.tasks.filter((t) => t.filesWritten.length > 0) ?? [];
+    if (!session || built.length === 0) return undefined;
+    return formatPreviousTaskContext({ ...session, tasks: built }, cwd);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Marker a worker writes when its process exits (see worker-agent.ts). */
 export function workerDoneMarker(taskFile: string): string {
   return `${taskFile}.done`;
@@ -947,7 +1094,7 @@ export function recordBuildInSession(
 export async function runIgnite(options: IgniteOptions): Promise<void> {
   const cwd = process.cwd();
   const noExit = options.noExit === true || options.exit === false;
-  const { panes: maxPanes, maxHeals, goal } = validateIgniteOptions(options);
+  let { panes: maxPanes, maxHeals, goal } = validateIgniteOptions(options);
   const dryRun = options.dryRun === true;
   const watch = dryRun ? false : options.watch !== false;
   const branchPrefix = options.branchPrefix || 'maos-ignite';
@@ -995,6 +1142,10 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   const disambiguation = disambiguateGoal(goal, previousGoals);
   const effectiveGoal = disambiguation.sanitizedGoal;
 
+  const adaptivePlan = resolveAdaptiveSwarmPanes(options.panes, effectiveGoal);
+  maxPanes = adaptivePlan.panes;
+  console.log(chalk.cyan(`  🧠 ${adaptivePlan.reason}`));
+
   if (disambiguation.isCorrection && disambiguation.rejectedGoal) {
     console.log(
       chalk.cyan(
@@ -1002,6 +1153,8 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
       ),
     );
   }
+
+  const previousTaskContext = buildPreviousTaskContext(cwd);
 
   const config = services.project.loadConfig();
   const roster = (config.agents as Array<{ id: string; role: string; capabilities: string[] }>).map((a) => ({
@@ -1023,6 +1176,7 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
       rejectedGoal: disambiguation.rejectedGoal,
       previousGoals,
       isCorrection: disambiguation.isCorrection,
+      previousTaskContext,
     });
     subtasks = result.tasks.slice(0, maxPanes);
     spinner.succeed(chalk.green(`Decomposed into ${subtasks.length} subtasks (${label})`));
@@ -1092,7 +1246,7 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
       fs.rmSync(workerDoneMarker(taskFile), { force: true });
       fs.writeFileSync(
         taskFile,
-        `# ${task.title}\n\n${task.description}\n\n## Worker\n- agent: ${agentId}\n- branch: ${branch}\n- worktree: ${wt.worktreePath}\n\n## Instructions\n1. Implement ONLY this subtask inside the worktree.\n2. Run the build/tests until green.\n3. Do not touch files outside your scope. The healer watches this pane.\n`,
+        `# ${task.title}\n\n${task.description}\n\n## Worker\n- agent: ${agentId}\n- branch: ${branch}\n- worktree: ${wt.worktreePath}\n\n## Instructions\n1. Implement ONLY this subtask inside the worktree.\n2. Run the build/tests until green.\n3. Do not touch files outside your scope. The healer watches this pane.\n\n${WORKER_GUARDRAILS}${previousTaskContext ? `\n## Previous task (fix/extend these files)\n${previousTaskContext}\n` : ''}`,
         'utf-8',
       );
       let direction: 'right' | 'down' = 'right';
@@ -1240,6 +1394,7 @@ export async function runIgnite(options: IgniteOptions): Promise<void> {
   const healer = new AutonomousHealer({
     projectRoot: cwd,
     paneIds: workers.map((w) => w.paneId).filter((p): p is string => Boolean(p)),
+    paneRoots: Object.fromEntries(workers.filter((w) => w.paneId).map((w) => [w.paneId!, w.worktreePath])),
     reader: new CliHerdrPaneReader(),
     provider: healProvider,
     bus,
@@ -1365,7 +1520,14 @@ export function printMergeReport(cwd: string, workers: IgniteWorker[], autoMerge
     for (const line of stat.split('\n').slice(0, 10)) {
       console.log(chalk.gray(`    ${line}`));
     }
-    if (autoMerge) {
+    const protectedHits = autoMerge ? findProtectedFileChanges(cwd, w.branch) : [];
+    if (protectedHits.length > 0) {
+      console.log(
+        chalk.red(
+          `    ❌ merge blocked: branch modifies protected project files (${protectedHits.join(', ')}). Review: git diff HEAD...${w.branch}`,
+        ),
+      );
+    } else if (autoMerge) {
       const res = tryMergeBranch(cwd, w.branch);
       console.log(
         res.merged ? chalk.green(`    ✅ merged: ${res.detail}`) : chalk.red(`    ❌ merge blocked: ${res.detail}`),

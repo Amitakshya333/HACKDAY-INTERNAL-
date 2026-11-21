@@ -153,7 +153,7 @@ describe('Stale preview & TUI regressions', () => {
     (tui as any).lastRenderedFrame = [];
     (tui as any).renderInternal();
     const lines = ((tui as any).lastRenderedFrame as string[]).map((l) => l.replace(ANSI, ''));
-    const cols = ['⌂  Dashboard', '✉  Chat', '❖  Swarm', '▥  Telemetry', '☰  Event Log', '⚙  Settings'].map(
+    const cols = ['⌂  Dashboard', '◈  Chat', '❖  Swarm', '▥  Telemetry', '☰  Event Log', '⚙  Settings'].map(
       (label) => {
         const line = lines.find((l) => l.includes(label));
         expect(line, label).toBeDefined();
@@ -163,7 +163,7 @@ describe('Stale preview & TUI regressions', () => {
     expect(new Set(cols).size).toBe(1);
   });
 
-  it('keeps the brand visible while a task transcript is shown', () => {
+  it('maximizes viewport space in transcript view by omitting brand banner', () => {
     const tui = new MaosTui(tmp);
     (tui as any).activeTab = 1;
     (tui as any).transcript = ['$ Launching MAOS Gemma swarm', 'worker output'];
@@ -171,7 +171,8 @@ describe('Stale preview & TUI regressions', () => {
     (tui as any).renderInternal();
     const plain = ((tui as any).lastRenderedFrame as string[]).join('\n').replace(ANSI, '');
     expect(plain).toContain('worker output');
-    expect(plain.includes('MAOS OASIS') || plain.includes('┌────────────┐')).toBe(true);
+    // In transcript view, logo is omitted to maximize space for logs & previews
+    expect(plain.includes('┌────────────┐')).toBe(false);
   });
 
   it('F3 toggles mouse capture so native text selection works', () => {

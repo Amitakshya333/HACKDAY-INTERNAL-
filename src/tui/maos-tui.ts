@@ -96,6 +96,14 @@ const MAOS_OASIS_LOGO_ROWS = [
 ];
 const MAOS_OASIS_LOGO_WIDTH = Math.max(...MAOS_OASIS_LOGO_ROWS.map(terminalCellWidth));
 
+const PREVIEW_ERROR_OVERLAY = `<script>(function(){function show(m){var d=document.getElementById('maos-preview-error');if(!d){d=document.createElement('pre');d.id='maos-preview-error';d.setAttribute('role','alert');d.style.cssText='position:fixed;left:0;right:0;bottom:0;margin:0;padding:12px 16px;max-height:40vh;overflow:auto;background:#3f0d1a;color:#fecdd3;font:13px/1.4 monospace;z-index:2147483647;white-space:pre-wrap';(document.body||document.documentElement).appendChild(d);}d.textContent+=(d.textContent?'\\n':'MAOS preview runtime error:\\n')+m;}window.addEventListener('error',function(e){show(e.message+(e.filename?' ('+e.filename.split('/').pop()+':'+e.lineno+')':''));});window.addEventListener('unhandledrejection',function(e){show('Unhandled promise rejection: '+(e.reason&&e.reason.message||e.reason));});})();</script>`;
+
+/** Injects a tiny error overlay as the first script so it catches errors from every later script. */
+export function injectPreviewErrorOverlay(html: string): string {
+  const head = /<head[^>]*>/i.exec(html);
+  return head ? html.replace(head[0], head[0] + PREVIEW_ERROR_OVERLAY) : PREVIEW_ERROR_OVERLAY + html;
+}
+
 function terminalCellWidth(value: string | undefined | null): number {
   if (!value) return 0;
   const plainText = String(value)
@@ -3422,7 +3430,9 @@ export class MaosTui {
         const ext = path.extname(targetFile).toLowerCase();
         const contentType = mimeTypes[ext] || 'application/octet-stream';
         try {
-          const content = fs.readFileSync(targetFile);
+          const raw = fs.readFileSync(targetFile);
+          // Show runtime errors on the page so a broken build isn't just a blank white screen.
+          const content = ext === '.html' ? injectPreviewErrorOverlay(raw.toString('utf-8')) : raw;
           res.writeHead(200, { 'Content-Type': contentType });
           res.end(content);
         } catch {
@@ -3836,7 +3846,7 @@ export class MaosTui {
       const step = bodyRows >= 16 ? 2 : 1;
       const navTop = bodyRows >= 16 ? Math.max(2, Math.floor(bodyRows * 0.08)) : 1;
       railItem(navTop, '⌂', 'Dashboard', 1);
-      railItem(navTop + step, '✉', 'Chat', 2);
+      railItem(navTop + step, '◈', 'Chat', 2);
       railItem(
         navTop + step * 2,
         '❖',
@@ -3963,16 +3973,8 @@ export class MaosTui {
         rows.push(...wrapTerminalLine(runningRow, transcriptWidth));
       }
       const promptRows = 4;
-      // Keep the brand visible during runs: full logo on tall screens, a one-line badge otherwise.
-      const brandRows: string[] = [];
-      if (bodyRows >= 26 && W >= MAOS_OASIS_LOGO_WIDTH) {
-        for (const row of MAOS_OASIS_LOGO_ROWS) brandRows.push(center(c.slateText(row)));
-        brandRows.push('');
-      } else if (bodyRows >= 12) {
-        brandRows.push(center(`${c.boldWhite('MAOS')} ${c.cyanBright('OASIS')} ${c.slateMuted('· Sovereign Swarm')}`));
-      }
-      lines.push(...brandRows);
-      const viewportRows = Math.max(1, bodyRows - promptRows - brandRows.length);
+      // Ignite section: maximize viewport space for build logs, diffs and previews (no brand logo)
+      const viewportRows = Math.max(1, bodyRows - promptRows);
       this.transcriptViewportRows = viewportRows;
       this.transcriptRenderedRowCount = rows.length;
       this.transcriptScrollOffset = Math.max(

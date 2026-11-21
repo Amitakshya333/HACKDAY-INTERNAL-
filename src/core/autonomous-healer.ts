@@ -124,6 +124,8 @@ export interface HerdrPaneReader {
 
 export interface AutonomousHealerOptions {
   projectRoot: string;
+  /** Per-pane root (e.g. a worker's worktree). Patches for that pane land there, not in projectRoot. */
+  paneRoots?: Record<string, string>;
   /** Explicit pane IDs to watch. When omitted, all live panes are discovered. */
   paneIds?: string[];
   reader?: HerdrPaneReader;
@@ -877,6 +879,8 @@ export class AutonomousHealer {
   }
 
   private async healTrace(paneId: string, trace: ErrorTrace): Promise<HealAttempt | null> {
+    // Patch the pane's own worktree; writing to projectRoot dirtied main and blocked worker merges.
+    const healRoot = this.opts.paneRoots?.[paneId] ?? this.opts.projectRoot;
     const safeEmit = (event: Parameters<NonNullable<typeof this.opts.bus>['emit']>[0]) => {
       try {
         this.opts.bus?.emit(event);
@@ -923,7 +927,7 @@ export class AutonomousHealer {
 
     let patch = formulateHotpatch(trace);
     if (patch.needsLlm && this.opts.provider && patch.ops.length === 0) {
-      const llmPatch = await formulateHotpatchWithLlm(this.opts.provider, trace, this.opts.projectRoot);
+      const llmPatch = await formulateHotpatchWithLlm(this.opts.provider, trace, healRoot);
       if (llmPatch) patch = llmPatch;
     }
 
@@ -953,7 +957,7 @@ export class AutonomousHealer {
     }
 
     try {
-      const { backupDir, filesTouched } = applyHotpatch(patch, this.opts.projectRoot);
+      const { backupDir, filesTouched } = applyHotpatch(patch, healRoot);
       this.healsPerPane.set(paneId, heals + 1);
       this.lastHealAt.set(paneId, Date.now());
       this.stats.patchesApplied++;

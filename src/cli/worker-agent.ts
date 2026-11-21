@@ -17,6 +17,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { executeTool } from '../integrations/tools';
 import { SNAKE_GOAL_PATTERN, snakeScaffold } from './scaffolds/snake';
+import { WEBGL_GOAL_PATTERN, webgl3dScaffold } from './scaffolds/webgl3d';
 import { extractToolCallsFromContent } from '../core/agent-runner';
 import { resolveWorktreeTestCommand } from './commands/ignite';
 
@@ -187,6 +188,7 @@ function generateDynamicGoalScaffold(
     /web|ui|interface|html|frontend|game|view|hud/i.test(targetTask);
 
   if (SNAKE_GOAL_PATTERN.test(targetGoal)) return snakeScaffold();
+  if (WEBGL_GOAL_PATTERN.test(targetGoal)) return webgl3dScaffold(targetGoal);
 
   const isTicTacToe = /tic[- ]*tac[- ]*toe/i.test(targetGoal) || /tic[- ]*tac[- ]*toe/i.test(targetTask);
 

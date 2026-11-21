@@ -156,6 +156,8 @@ export interface ContinuityContext {
   rejectedGoal?: string;
   previousGoals?: string[];
   isCorrection?: boolean;
+  /** <PREVIOUS_TASK_CONTEXT> block: last build's files/output, so follow-ups like "it's blank, fix it" target them. */
+  previousTaskContext?: string;
 }
 
 // ─── System Prompt ────────────────────────────────────────────
@@ -186,6 +188,12 @@ function buildDecomposePrompt(
       .map((g) => `"${g}"`)
       .join(', ');
     continuitySection += `\n## Session History & Task Continuity\nPrevious goals executed in this session: ${prev}\n`;
+  }
+  if (continuity?.previousTaskContext) {
+    continuitySection +=
+      `\n## Previous Task Output\n${continuity.previousTaskContext}\n` +
+      'http://localhost:3030 is the MAOS Oasis static preview server for that output directory, not an app to build. ' +
+      'If the goal reports a bug there (e.g. a blank page), plan fixes to the files listed above; do not create servers or package.json.\n';
   }
   if (continuity?.isCorrection && continuity?.rejectedGoal) {
     continuitySection += `\n## CRITICAL USER CORRECTION (NEGATIVE CONSTRAINT)\nThe user explicitly rejected: "${continuity.rejectedGoal}".\nDO NOT create any subtasks, files, components, or references related to "${continuity.rejectedGoal}". Build ONLY what is requested for "${goal}".\n`;

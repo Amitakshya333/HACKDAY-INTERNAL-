@@ -114,8 +114,9 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
       // Refined icons and titles
       expect(frame).toContain('⌂');
       expect(frame).toContain('Dashboard');
-      expect(frame).toContain('✉');
+      expect(frame).toContain('◈');
       expect(frame).not.toContain('💬');
+      expect(frame).not.toContain('✉');
       expect(frame).toContain('Chat');
       expect(frame).toContain('❖');
       expect(frame).toContain('Swarm');
@@ -142,7 +143,7 @@ describe('Collapsible Sidebar & Refined Aesthetics Suite', () => {
 
       // Mini-rail icons must be present
       expect(frame).toContain('⌂');
-      expect(frame).toContain('✉');
+      expect(frame).toContain('◈');
       expect(frame).toContain('❖');
       expect(frame).toContain('▥');
       expect(frame).toContain('☰');

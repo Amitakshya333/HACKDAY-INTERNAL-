@@ -191,7 +191,7 @@ program
   .option('--goal <goal>', 'Goal for the swarm to execute end-to-end')
   .option('-p, --provider <provider>', 'Override provider from maos.config.json (skips Gemma default)')
   .option('-m, --model <model>', 'Model ID (default: MAOS_GEMMA_MODEL or gemma2:9b)')
-  .option('--panes <n>', 'Max worker panes to spawn (1-8, default: 4)', '4')
+  .option('--panes <n>', 'Max worker panes to spawn (1-8, default: 2)', '2')
   .option('--max-heals <n>', 'Max auto-applied heals per pane (default: 5)', '5')
   .option('--branch-prefix <prefix>', 'Git branch prefix for worker worktrees', 'maos-ignite')
   .option('--dry-run', 'Preview the decomposition plan without spawning panes')
