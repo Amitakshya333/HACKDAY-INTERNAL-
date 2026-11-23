@@ -49,6 +49,7 @@ import {
   ensureProjectRuntimeDirs,
   OasisSessionMetadata,
 } from './session-manager';
+import { resolvePreviewTarget, startPreviewServer, launchBrowser } from './preview-server';
 
 const VERSION = '0.4.0';
 
@@ -355,6 +356,62 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           `\n✓ Pruned ${result.prunedCount} session(s) older than ${opts.olderThan} and cleaned orphaned worktrees.\n`,
         ),
       );
+    });
+
+  // ── Command: preview ──
+  program
+    .command('preview')
+    .description('Inspect and open live preview of built swarm artifacts')
+    .option('-p, --port <number>', 'Preview server port (default: 3030)', '3030')
+    .option('--no-browser', 'Do not automatically launch system browser')
+    .option('-s, --status', 'Print preview status and exit without starting server')
+    .action(async (opts: { port?: string; browser?: boolean; status?: boolean }) => {
+      const cwd = process.cwd();
+      const projectRoot = findProjectRoot(cwd);
+      const target = resolvePreviewTarget(projectRoot);
+
+      if (!target.entrypoint || !fs.existsSync(target.entrypoint)) {
+        console.log(chalk.yellow('\n⚠️  No built output found to preview.'));
+        console.log(
+          chalk.gray('Run a swarm task first: maos-oasis "build a web app" or maos ignite --goal "<goal>"\n'),
+        );
+        return;
+      }
+
+      if (opts.status) {
+        console.log(chalk.bold.cyan('\n🔍 MAOS Oasis Preview Target:'));
+        console.log(`  Entrypoint:  ${chalk.white(target.entrypoint)}`);
+        console.log(`  Relative:    ${chalk.gray(target.relPath)}`);
+        console.log(`  Build Files: ${chalk.green(target.filesCount || 'verified')}`);
+        console.log(`  Output Dir:  ${chalk.gray(target.outputDir)}\n`);
+        return;
+      }
+
+      const initialPort = parseInt(opts.port || '3030', 10) || 3030;
+      try {
+        const instance = await startPreviewServer(projectRoot, initialPort);
+        console.log(chalk.bold.green(`\n🚀 Live Preview Server running on loopback: ${instance.url}`));
+        console.log(chalk.gray(`   Serving: ${target.entrypoint} (${target.filesCount} build files)\n`));
+
+        if (opts.browser !== false && !process.env.VITEST) {
+          launchBrowser(instance.url);
+        }
+
+        if (process.env.VITEST) {
+          await instance.close();
+          return;
+        }
+
+        console.log(chalk.gray('Press Ctrl+C to stop preview server.\n'));
+        process.on('SIGINT', async () => {
+          await instance.close();
+          process.exit(0);
+        });
+      } catch (err) {
+        console.error(
+          chalk.red(`\n❌ Failed to launch preview server: ${err instanceof Error ? err.message : String(err)}\n`),
+        );
+      }
     });
 
   // ── Command: resume ──
