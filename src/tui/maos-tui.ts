@@ -42,6 +42,7 @@ import {
   compactSessionContext,
   setCurrentSession,
 } from '../oasis/session-manager';
+import { resolvePreviewTarget } from '../oasis/preview-server';
 
 // ── Colors & Styles ──────────────────────────────────────────────
 const c = {
@@ -3556,33 +3557,9 @@ export class MaosTui {
   }
 
   public previewArtifacts(): void {
-    const lastBuildPath = path.join(this.projectRoot, '.maos', 'last-build.json');
-    let entrypoint: string | null = null;
-    let filesCount = 0;
-
-    if (fs.existsSync(lastBuildPath)) {
-      try {
-        const manifest = JSON.parse(fs.readFileSync(lastBuildPath, 'utf-8'));
-        entrypoint = manifest.entrypoint ? path.resolve(this.projectRoot, manifest.entrypoint) : null;
-        filesCount = Array.isArray(manifest.files) ? manifest.files.length : 0;
-      } catch {}
-    }
-
-    const outputHtml = path.resolve(this.projectRoot, 'output', 'index.html');
-    const distHtml = path.resolve(this.projectRoot, 'dist-preview', 'index.html');
-    const rootHtml = path.resolve(this.projectRoot, 'index.html');
-
-    if (entrypoint && entrypoint.includes('apps') && fs.existsSync(outputHtml)) {
-      entrypoint = outputHtml;
-    } else if (entrypoint && fs.existsSync(entrypoint)) {
-      // Valid target from manifest
-    } else if (fs.existsSync(outputHtml)) {
-      entrypoint = outputHtml;
-    } else if (fs.existsSync(distHtml)) {
-      entrypoint = distHtml;
-    } else if (fs.existsSync(rootHtml)) {
-      entrypoint = rootHtml;
-    }
+    const target = resolvePreviewTarget(this.projectRoot);
+    let entrypoint = target.entrypoint;
+    let filesCount = target.filesCount;
 
     if (!entrypoint || !fs.existsSync(entrypoint)) {
       const msg = 'No built output found to preview. Run an ignite goal first with /ignite <goal>.';
