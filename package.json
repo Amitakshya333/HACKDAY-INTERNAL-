@@ -71,6 +71,7 @@
     "start": "node dist/cli/index.js dashboard",
     "dashboard": "node dist/cli/index.js dashboard",
     "tui": "tsx src/tui/maos-tui.ts",
+    "preview": "node dist/oasis/oasis-cli.js preview",
     "cockpit": "python src/tui/maos_cockpit.py",
     "ink": "node dist/tui/maos-ink.mjs",
     "repl": "node dist/cli/index.js repl",

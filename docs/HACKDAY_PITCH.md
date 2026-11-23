@@ -58,4 +58,5 @@
 * **Orchestration:** TypeScript + MAOS Core (`src/core`, `src/integrations/herdr.ts`)
 * **Terminal Engine:** Herdr Socket IPC (`v0.8.0-preview`)
 * **Agent Model:** Gemma 2 / Qwen local via OpenCode Harness
+* **Operator Manual:** [OASIS_TUI_AND_PREVIEW_GUIDE.md](./OASIS_TUI_AND_PREVIEW_GUIDE.md) (Live preview server, hotkeys, and multi-tab mission control)
 * **Test Verification:** 47 automated tests passing in 1.24s
